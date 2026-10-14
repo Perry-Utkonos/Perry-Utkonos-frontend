@@ -1,0 +1,10 @@
+{
+  "name": "Fate local import",
+  "id": "REPLACE_WITH_YOUR_DEVELOPMENT_PLUGIN_ID",
+  "api": "1.0.0",
+  "editorType": ["figma"],
+  "main": "code.generated.js",
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "networkAccess": { "allowedDomains": ["none"] }
+}

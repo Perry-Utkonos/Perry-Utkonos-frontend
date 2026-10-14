@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.tmp/
+*.tsbuildinfo
+*.log
+.qa-*.png
+.qa-*.jpg
+.qa-*.webp
+design/figma-import.generated.js
+design/code.generated.js
+design/manifest.json
+.env
+.env.*
+!.env.example
+

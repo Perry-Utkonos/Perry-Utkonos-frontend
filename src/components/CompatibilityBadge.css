@@ -1,0 +1,3 @@
+
+.compatibility-badge { display: inline-flex; align-items: center; gap: 5px; padding: 7px 10px; border: 1px solid #cbb1f35e; border-radius: 20px; background: #30263bdb; color: #eadcff; font-size: 10px; font-weight: 700; letter-spacing: .1px; }
+.compatibility-badge svg { color: #d2a9ff; }

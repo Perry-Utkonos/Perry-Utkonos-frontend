@@ -1,0 +1,21 @@
+
+.profile-swipe-stage { display: grid; grid-template-columns: 34px minmax(0, 1fr) 34px; align-items: center; gap: 8px; width: 100%; }
+.profile-card { position: relative; min-width: 0; overflow: hidden; border-radius: 25px; background: #241e28; box-shadow: 0 15px 55px #0005; transition: transform .26s cubic-bezier(.2,.75,.25,1); will-change: transform; }
+.profile-card.is-dragging { cursor: grabbing; }
+.profile-card-image { position: relative; display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; min-height: 0; max-height: 720px; overflow: hidden; padding: 0; border: 0; background: #27212b; text-align: left; cursor: pointer; touch-action: pan-y; user-select: none; }
+.profile-card-image > img { width: 100%; height: 100%; object-fit: cover; object-position: center 40%; transition: transform .6s cubic-bezier(.2,.7,.2,1); }
+.profile-card:hover .profile-card-image > img { transform: scale(1.025); }
+.image-shade { position: absolute; inset: 0; background: linear-gradient(180deg, #0f0c111f 0%, transparent 30%, #100c11a8 69%, #100c11f5 100%); }
+.profile-hover-hint { position: absolute; z-index: 2; inset: 0; display: grid; place-items: center; background: #7777809c; color: #fff; font-size: 22px; font-weight: 700; opacity: 0; pointer-events: none; transition: opacity .2s ease; backdrop-filter: blur(2px); }
+.profile-card-image:hover:not(.is-dragging) .profile-hover-hint, .profile-card-image:focus-visible:not(.is-dragging) .profile-hover-hint, .profile-card-image.is-pressed:not(.is-dragging) .profile-hover-hint { opacity: 1; }
+.swipe-action { display: grid; width: 34px; height: 58px; place-items: center; padding: 0; border: 0; border-radius: 0; background: transparent; cursor: pointer; transition: transform .2s ease, color .2s ease, filter .2s ease; }
+.swipe-action:hover { transform: scale(1.18); }
+.swipe-skip { color: #c9c8ce; filter: drop-shadow(0 0 8px #c6c4d06b); }
+.swipe-skip:hover { color: #e0dfe4; }
+.swipe-like { color: #8bdfa1; filter: drop-shadow(0 0 9px #74df937d); }
+.swipe-like:hover { color: #b0f2be; }
+.profile-card-info { position: absolute; right: 20px; bottom: 19px; left: 20px; color: white; pointer-events: none; }
+.feed-profile-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.feed-zodiac { padding: 6px 10px; border: 1px solid #ffffff42; border-radius: 18px; background: #17141c85; color: #f0e7f3; font-size: 10px; backdrop-filter: blur(8px); }
+.profile-card-info h2 { margin: 11px 0 3px; font: 800 29px/1.2 Manrope, sans-serif; letter-spacing: -.7px; }
+.profile-card-info h2 span { font-size: 24px; font-weight: 500; }

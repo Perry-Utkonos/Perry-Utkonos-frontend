@@ -1,0 +1,19 @@
+
+.own-profile-page { padding-top: 30px; }
+.own-profile-card { display: flex; align-items: center; flex-direction: column; padding: 9px 0 19px; text-align: center; }
+.own-photo { position: relative; width: 100px; height: 100px; margin-bottom: 14px; }
+.own-photo img { width: 100%; height: 100%; border: 3px solid #342a3b; border-radius: 50%; object-fit: cover; }
+.own-photo button { position: absolute; right: 0; bottom: 0; display: grid; width: 30px; height: 30px; place-items: center; border: 3px solid var(--bg); border-radius: 50%; background: var(--primary); color: white; cursor: pointer; }
+.own-profile-card h2 { margin: 0 0 5px; font: 700 21px Manrope, sans-serif; }
+.own-profile-card .profile-location { font-size: 11px; }
+.own-bio { max-width: 390px; margin: 16px auto; color: #b9b1bd; font-size: 11px; line-height: 1.65; }
+.profile-zodiac { margin-top: 12px; color: #d0afea; font-size: 11px; }
+.premium-card { display: flex; width: 100%; align-items: center; gap: 12px; padding: 14px; border: 1px solid #9b76c546; border-radius: 17px; background: #2b2235; text-align: left; cursor: pointer; transition: .2s; }
+.premium-card:hover { border-color: #bf95e9; transform: translateY(-2px); }
+.premium-card.premium-active { border-color: #81cfa0; }
+.premium-icon { display: grid; width: 38px; height: 38px; flex: 0 0 auto; place-items: center; border-radius: 13px; background: #a27bd330; color: #e5c6ff; }
+.premium-card > span:nth-child(2) { display: grid; flex: 1; gap: 5px; }
+.premium-card strong { color: #efe1ff; font-size: 11px; }
+.premium-card small { color: #aaa0b1; font-size: 9px; }
+.premium-card > svg { color: #b49bc8; }
+.profile-inline-hint { margin: -5px 0 11px; color: #a9a0ae; font-size: 9px; }

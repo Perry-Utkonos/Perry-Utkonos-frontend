@@ -1,0 +1,13 @@
+
+.chat-time i { background: var(--primary); color: var(--on-primary); }
+.chats-header { justify-content: flex-start; }
+.chats-header-centaur { width: 36px; height: 36px; margin-left: 2px; border-radius: 9px; }
+.chats-page { background: var(--page-bg); }
+.chat-info > span { color: var(--muted); }
+.chat-row { border-color: var(--line); }
+.chat-row:hover { background: var(--surface-light); }
+.chat-info > strong { color: var(--text); }
+.chat-info > strong small { color: var(--accent); }
+:root[data-theme='cream'] .chat-info > strong small { color: var(--accent); }
+:root[data-theme='cream'] .chat-time, :root[data-theme='cream'] .chat-chevron { color: var(--muted); }
+:root[data-theme='cream'] .chat-avatar i { background: var(--accent); }

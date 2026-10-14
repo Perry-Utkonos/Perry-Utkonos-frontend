@@ -1,0 +1,14 @@
+
+.detail-page { max-width: none; border: 0; }
+.detail-page > .page-header, .detail-page > .photo-grid, .detail-page > .detail-content, .detail-page > .profile-reading-cta, .detail-page > .detail-actions { width: 100%; max-width: 512px; margin-right: auto; margin-left: auto; }
+.detail-page > .profile-reading-cta { display: flex; }
+.detail-title-row h1 { color: var(--text); }
+.meta-icon { color: var(--accent); }
+.photo-grid button { background: var(--surface); }
+.detail-page { background: var(--page-bg); }
+.detail-section > p { color: var(--muted); }
+.detail-meta > div { background: var(--surface); border-color: var(--line); color: var(--text); }
+.detail-actions { background: var(--surface); border-color: var(--line); backdrop-filter: none; }
+.meta-icon .centaur-icon { width: 17px; height: 17px; }
+.photo-viewer { background: transparent; }
+.photo-viewer-close, .photo-viewer-arrow { background: var(--surface); border-color: var(--line); color: var(--text); backdrop-filter: none; }

@@ -1,0 +1,3 @@
+
+.compatibility-badge { background: var(--surface); border-color: var(--line); color: var(--text); backdrop-filter: none; }
+.compatibility-badge svg { color: var(--accent); }

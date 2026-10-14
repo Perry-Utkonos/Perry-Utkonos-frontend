@@ -1,0 +1,13 @@
+
+.compat-hero h1, .score-ring strong { color: var(--text); }
+.zodiac-chips, .zodiac-chips i { color: var(--accent); }
+.compatibility-page { background: var(--page-bg); }
+.compat-summary, .compat-detail-card p { color: var(--muted); }
+.compat-detail-card, .score-ring > div { background: var(--surface); border-color: var(--line); color: var(--text); }
+.compat-detail-card .interest-list span { background: var(--surface-light); color: var(--text); border-color: var(--line); }
+.breakdown-icon { background: var(--surface-light); color: var(--accent); border-color: var(--line); }
+.disclaimer { color: var(--muted); }
+.score-ring { background: conic-gradient(var(--primary) 0 70%, var(--accent) 70% 94%, var(--line) 94% 100%); box-shadow: none; }
+.compat-photos img, .compat-photos > span { border-color: var(--page-bg); }
+.compat-photos > span { background: var(--primary); }
+.compat-photos .centaur-icon { width: 20px; height: 20px; }

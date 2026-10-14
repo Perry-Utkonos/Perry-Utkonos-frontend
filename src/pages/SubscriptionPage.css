@@ -1,0 +1,15 @@
+
+
+.subscription-page { display: flex; flex-direction: column; }
+.subscription-page .page-header { justify-content: space-between; }
+.subscription-card { width: 100%; max-width: 390px; margin: 25px auto; padding: 25px 21px; border: 1px solid #a17bc64d; border-radius: 21px; background: #25202d; box-shadow: 0 16px 45px #0003; }
+.subscription-icon { display: grid; width: 46px; height: 46px; place-items: center; border: 1px solid #cda7ee4a; border-radius: 15px; background: #a27bd330; color: #e5c6ff; }
+.subscription-card h2 { margin: 17px 0 6px; font: 700 20px Manrope, sans-serif; }
+.subscription-card > p { margin: 0; color: var(--muted); font-size: 12px; }
+.subscription-price { margin-top: 24px; }
+.subscription-price strong { font: 800 31px Manrope, sans-serif; }
+.subscription-price span { color: var(--muted); font-size: 11px; }
+.subscription-card ul { display: grid; gap: 12px; margin: 21px 0; padding: 0; list-style: none; }
+.subscription-card li { display: flex; align-items: center; gap: 9px; color: #ded5e2; font-size: 11px; }
+.subscription-card li svg { color: #9dd2ac; }
+.subscription-card > small { display: block; margin-top: 12px; color: #837b88; text-align: center; font-size: 9px; }

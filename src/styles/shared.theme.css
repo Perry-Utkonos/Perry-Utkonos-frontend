@@ -1,0 +1,18 @@
+
+body { color: var(--text); background: var(--bg); }
+.page { background: var(--page-bg); border-color: var(--line); backdrop-filter: none; }
+.page-header h1, .header-title { color: var(--text); }
+.eyebrow { color: var(--accent); }
+.icon-button { background: var(--surface); border-color: var(--line); color: var(--text); }
+.icon-button:hover { background: var(--surface-light); border-color: var(--accent); }
+.button-primary { background: var(--primary); color: var(--on-primary); box-shadow: none; }
+.button-primary:hover { background: var(--primary); box-shadow: none; filter: brightness(1.12); }
+.button-subtle { background: var(--surface-light); border-color: var(--line); color: var(--text); }
+.button-subtle:hover { background: var(--surface); }
+.interest-list span { background: var(--surface); border-color: var(--line); color: var(--text); backdrop-filter: none; }
+.detail-interests span { background: var(--surface-light); color: var(--text); border-color: var(--line); }
+.round-action { background: var(--surface-light); border-color: var(--line); color: var(--text); }
+.action-accept { background: var(--primary); color: var(--on-primary); }
+.action-skip:hover, .action-accept:hover { background: var(--surface-light); color: var(--text); }
+:root[data-theme='cream'] .action-accept { border-color: var(--accent); }
+:root[data-theme='cream'] .action-skip { background: var(--surface-light); color: var(--text); }

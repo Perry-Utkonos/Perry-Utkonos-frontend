@@ -1,0 +1,25 @@
+
+.compatibility-page { padding-top: 22px; }
+.compatibility-page .page-header { margin-bottom: 12px; }
+.compat-hero { display: flex; align-items: center; flex-direction: column; padding: 13px 0 23px; text-align: center; }
+.compat-photos { position: relative; display: flex; align-items: center; margin-bottom: 20px; }
+.compat-photos img { width: 69px; height: 69px; border: 3px solid var(--bg); border-radius: 50%; object-fit: cover; }
+.compat-photos img + span + img { margin-left: -16px; }
+.compat-photos > span { z-index: 1; display: grid; width: 30px; height: 30px; place-items: center; margin: 0 -6px; border: 3px solid var(--bg); border-radius: 50%; background: var(--primary); color: white; }
+.score-ring { display: grid; width: 146px; height: 146px; place-items: center; margin: 15px 0 11px; border-radius: 50%; background: conic-gradient(#845c8f 0 70%, #939860 70% 94%, #ffffff12 94% 100%); box-shadow: 0 0 45px #845c8f33; }
+.score-ring > div { display: flex; width: 126px; height: 126px; align-items: center; justify-content: center; flex-direction: column; border-radius: 50%; background: #17141b; }
+.score-ring strong { font: 800 39px Manrope, sans-serif; letter-spacing: -2px; }
+.score-ring span { color: var(--muted); font-size: 10px; }
+.compat-hero h1 { margin: 7px 0; font: 700 19px Manrope, sans-serif; }
+.compat-summary { max-width: 300px; margin: 3px 0 0; color: var(--muted); font-size: 11px; line-height: 1.65; }
+.compat-breakdown { display: grid; gap: 10px; }
+.compat-detail-card { display: flex; gap: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 17px; background: #1b181f; }
+.breakdown-icon { display: grid; width: 35px; height: 35px; flex: 0 0 auto; place-items: center; border-radius: 12px; background: #342a40; color: #c7a8ec; }
+.breakdown-icon.zodiac { font-size: 23px; }
+.compat-detail-card strong { font-size: 12px; }
+.compat-detail-card p { margin: 6px 0 10px; color: var(--muted); font-size: 10px; line-height: 1.6; }
+.compat-detail-card .interest-list span { padding: 5px 8px; border: 0; background: #ffffff0c; color: #d5cbdc; }
+.zodiac-chips { display: inline-flex; align-items: center; gap: 9px; color: #d8c1f3; font-size: 10px; }
+.zodiac-chips i { color: var(--primary); font-size: 14px; font-style: normal; }
+.reading-cta { margin-top: 17px; }
+.disclaimer { margin: 12px auto 0; color: #79727d; text-align: center; font-size: 9px; }

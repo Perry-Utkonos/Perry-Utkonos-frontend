@@ -1,0 +1,10 @@
+
+
+.app-frame { position: relative; z-index: 1; min-height: 100vh; }
+.app-main { min-height: 0; }
+.route-loading { display: grid; min-height: 100vh; place-items: center; color: var(--muted); font-size: 12px; }
+
+.brand { display: inline-flex; align-items: center; gap: 8px; font: 800 21px Manrope, sans-serif; letter-spacing: -1px; }
+.brand-mark { display: grid; width: 30px; height: 30px; place-items: center; border-radius: 11px; background: var(--primary); color: white; box-shadow: 0 4px 20px #845c8f55; }
+.brand-dot { margin-left: -8px; color: var(--primary); }
+.desktop-sidebar { display: none; }

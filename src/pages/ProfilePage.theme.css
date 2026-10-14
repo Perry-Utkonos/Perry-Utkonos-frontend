@@ -1,0 +1,14 @@
+
+.profile-page-header { position: relative; }
+.profile-header-centaur { position: absolute; left: 50%; width: 38px; height: 38px; border-radius: 9px; transform: translateX(-50%); }
+.own-profile-card h2 { color: var(--text); }
+.profile-zodiac { color: var(--accent); }
+.own-profile-page { background: var(--page-bg); }
+.own-bio { color: var(--muted); }
+.premium-card { background: var(--surface); border-color: var(--line); color: var(--text); }
+.premium-card strong { color: var(--text); }
+.premium-icon { background: var(--surface-light); color: var(--accent); border-color: var(--line); }
+.premium-card small, .profile-inline-hint { color: var(--muted); }
+:root[data-theme='cream'] .premium-card.premium-active { border-color: var(--accent); }
+:root[data-theme='cream'] .profile-inline-hint { color: var(--muted); }
+:root[data-theme='cream'] .own-photo img { border-color: var(--line); }

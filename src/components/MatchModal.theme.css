@@ -1,0 +1,7 @@
+
+.match-avatars img, .match-avatars > span { border-color: var(--page-bg); }
+.match-avatars > span, .match-sparkle { background: var(--primary); }
+.match-avatars .centaur-icon { width: 20px; height: 20px; }
+.match-sparkle .centaur-icon { width: 36px; height: 36px; }
+.match-modal { background: var(--page-bg); border-color: var(--line); color: var(--text); }
+.modal-close { background: var(--surface); }

@@ -1,0 +1,11 @@
+
+.profile-card, .profile-card-image { background: var(--surface); }
+.feed-zodiac { background: var(--surface); border-color: var(--line); color: var(--text); backdrop-filter: none; }
+:root[data-theme='cream'] .swipe-like { color: var(--accent); filter: none; }
+:root[data-theme='cream'] .swipe-skip { color: var(--muted); filter: none; }
+:root[data-theme='cream'] .profile-card-info .profile-location { color: #fff; }
+.swipe-skip svg {
+  filter:
+    drop-shadow(0 0 3px #000000)
+    drop-shadow(0 0 5px #00000099);
+}

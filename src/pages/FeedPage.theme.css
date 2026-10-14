@@ -1,0 +1,14 @@
+
+.feed-page {
+  min-height: 100dvh;
+  background: var(--bg) var(--outer-art) center center / var(--art-size) no-repeat;
+}
+:root[data-theme='cream'] .feed-page {
+  color: #fff;
+}
+.feed-page { max-width: none; border: 0; }
+.feed-page .feed-header, .feed-page .profile-swipe-stage { width: 100%; max-width: 520px; margin-right: auto; margin-left: auto; }
+.feed-page .profile-card { box-shadow: none; }
+.feed-page .compatibility-badge, .feed-page .feed-zodiac { background: transparent; color: #fff; }
+:root[data-theme='cream'] .feed-page .compatibility-badge, :root[data-theme='cream'] .feed-page .feed-zodiac { background: transparent; color: var(--text); }
+:root[data-theme='cream'] .feed-page .page-header h1 { color: #fff; }

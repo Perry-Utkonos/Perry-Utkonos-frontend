@@ -1,0 +1,8 @@
+
+.theme-picker { display: flex; align-items: stretch; gap: 10px; }
+.theme-choice { display: flex; min-width: 0; align-items: center; gap: 8px; padding: 7px 9px; border: 2px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); cursor: pointer; font-size: 11px; font-weight: 700; }
+.theme-choice.selected { border-color: var(--accent); background: var(--surface-light); }
+.theme-choice img { width: 31px; height: 31px; border-radius: 7px; object-fit: cover; }
+.theme-choice:has(img[src='/images/pink-wht-gray.png']) img { filter: grayscale(1) brightness(.55); }
+.theme-choice span { min-width: 0; overflow-wrap: anywhere; }
+:root[data-theme='cream'] .theme-choice.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--primary); }

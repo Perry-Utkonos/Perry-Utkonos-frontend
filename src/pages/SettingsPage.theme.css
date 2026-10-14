@@ -1,0 +1,11 @@
+
+.theme-settings .theme-choice { flex: 1; }
+.theme-settings { margin: 2px 0 20px; padding: 15px; border: 1px solid var(--line); border-radius: 17px; background: var(--surface); }
+.theme-settings h3 { margin: 0 0 11px; font-size: 12px; }
+.settings-page { background: var(--page-bg); }
+.settings-list button { background: var(--surface); border-color: var(--line); color: var(--text); }
+.settings-list button { color: var(--text); }
+.settings-list button small, .settings-help { color: var(--muted); }
+.settings-list button:hover { color: var(--accent); }
+.settings-list button > span svg, .settings-list button > svg { color: var(--accent); }
+:root[data-theme='cream'] .settings-help svg { color: var(--accent); }

@@ -1,0 +1,16 @@
+
+.chat-compat { color: var(--accent); }
+.message-day { color: var(--muted); }
+.chat-page { background: var(--chat-bg); }
+.chat-header, .message-composer { background: var(--surface); border-color: var(--line); backdrop-filter: none; }
+.chat-header .icon-button { background: var(--surface-light); }
+.chat-header small { color: var(--accent); }
+.message-bubble { background: var(--bubble-theirs); border-color: var(--line); color: var(--text); }
+.mine .message-bubble { background: var(--bubble-mine); border-color: var(--primary); color: #fff; }
+.message-bubble time { color: var(--muted); }
+.mine .message-bubble time { color: #e6d9ed; }
+.message-composer input { color: var(--text); }
+.message-composer input::placeholder { color: var(--muted); }
+.message-composer button { background: var(--primary); color: var(--on-primary); }
+:root[data-theme='cream'] .chat-header small { color: var(--accent); }
+:root[data-theme='cream'] .mine .message-bubble time { color: var(--muted); }

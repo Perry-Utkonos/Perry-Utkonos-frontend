@@ -1,0 +1,25 @@
+
+.app-main {
+  --art-size: min(100vw, 100dvh);
+  background: var(--bg) var(--outer-art) center center / var(--art-size) no-repeat;
+}
+.desktop-sidebar { background: var(--page-bg) !important; border-color: var(--line); backdrop-filter: none; }
+.desktop-sidebar { color: var(--text); }
+.brand-mark { overflow: hidden; background: var(--primary); box-shadow: none; }
+.brand-dot { color: var(--accent); }
+.brand-mark .centaur-icon { width: 23px; height: 23px; }
+.side-link .centaur-icon { width: 20px; height: 20px; }
+.side-link { color: var(--muted); }
+.side-link:hover, .side-link.active { background: var(--surface); color: var(--accent); }
+.side-link.active { background: var(--surface-light); }
+.side-link i { background: var(--primary); color: var(--on-primary); }
+.desktop-sidebar > .theme-picker { margin-top: auto; }
+.desktop-sidebar > .settings-side-link { margin-top: auto; }
+.side-link svg { width: 19px; height: 19px; }
+.desktop-sidebar .theme-picker { flex-direction: column; }
+
+@media (min-width: 760px) {
+  .app-frame { width: 100%; max-width: none; margin: 0; }
+  .app-main { --art-size: min(100dvh, calc(100vw - 252px)); }
+  .desktop-sidebar { z-index: 5; left: 0; }
+}

@@ -1,0 +1,4 @@
+
+.centaur-icon { display: block; width: 21px; height: 21px; flex: 0 0 auto; border-radius: 5px; background: var(--outer-art) center / cover no-repeat; }
+.centaur-icon.monochrome { background-image: url('/images/brwn-wht.png'); }
+:root[data-theme='cream'] .centaur-icon { filter: grayscale(1); }
