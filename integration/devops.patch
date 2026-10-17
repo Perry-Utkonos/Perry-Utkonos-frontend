@@ -1,0 +1,137 @@
+diff --git a/compose.yaml b/compose.yaml
+index 0a0209d..e5d8f6d 100644
+--- a/compose.yaml
++++ b/compose.yaml
+@@ -35,6 +35,7 @@ services:
+     environment:
+       ASPNETCORE_ENVIRONMENT: Production
+       ASPNETCORE_URLS: http://+:8080
++      Logging__LogLevel__Microsoft.AspNetCore.Hosting.Diagnostics: Warning
+       ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=fate;Username=fate;Password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD_is_required}
+       ConnectionStrings__Redis: redis:6379
+       Jwt__Issuer: chatapp
+diff --git a/docker/frontend/nginx.conf b/docker/frontend/nginx.conf
+index 41a22e2..f62e314 100644
+--- a/docker/frontend/nginx.conf
++++ b/docker/frontend/nginx.conf
+@@ -3,11 +3,15 @@ map $http_upgrade $connection_upgrade {
+     '' close;
+ }
+ 
++log_format fate_safe '$remote_addr [$time_local] '
++                     '"$request_method $uri $server_protocol" $status $body_bytes_sent';
++
+ server {
+     listen 80;
+     server_name _;
+     root /usr/share/nginx/html;
+     index index.html;
++    access_log /var/log/nginx/access.log fate_safe;
+ 
+     location /api/ {
+         proxy_pass http://api:8080;
+@@ -18,6 +22,8 @@ server {
+     }
+ 
+     location /hubs/chat {
++        # SignalR's query token must not be repeated in upstream error messages.
++        error_log /dev/null;
+         proxy_pass http://api:8080;
+         proxy_http_version 1.1;
+         proxy_set_header Host $host;
+diff --git a/scripts/prepare_backend.py b/scripts/prepare_backend.py
+index 3694ae8..fe9837d 100644
+--- a/scripts/prepare_backend.py
++++ b/scripts/prepare_backend.py
+@@ -1,4 +1,4 @@
+-"""Apply the deployment-only backend changes to the ignored local checkout."""
++"""Validate the integrated backend and remove optional checked-in secrets."""
+ 
+ from pathlib import Path
+ import json
+@@ -9,23 +9,14 @@ api = root / "backend" / "src" / "ChatApp.Api"
+ program = api / "Program.cs"
+ settings = api / "appsettings.json"
+ 
+-old = "    if (app.Environment.IsDevelopment())\n        await db.Database.MigrateAsync();"
+-new = (
+-    "    if (app.Environment.IsDevelopment() || "
+-    'app.Configuration.GetValue<bool>("Database:ApplyMigrations"))\n'
+-    "        await db.Database.MigrateAsync();"
+-)
+-
+ source = program.read_text(encoding="utf-8")
+-if old in source:
+-    program.write_text(source.replace(old, new, 1), encoding="utf-8")
+-elif new not in source:
+-    raise SystemExit("Неизвестная версия Program.cs; миграции не изменены")
++if '"Database:ApplyMigrations"' not in source:
++    raise SystemExit("Backend integration patch is required: migration flag is missing")
+ 
+-data = json.loads(settings.read_text(encoding="utf-8"))
+-data["ConnectionStrings"]["Postgres"] = ""
+-data["ConnectionStrings"]["Redis"] = ""
+-data["Jwt"]["SigningKey"] = ""
+-settings.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
++if settings.exists():
++    data = json.loads(settings.read_text(encoding="utf-8"))
++    data.setdefault("ConnectionStrings", {}).update(Postgres="", Redis="")
++    data.setdefault("Jwt", {})["SigningKey"] = ""
++    settings.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+ 
+-print("Backend: включён флаг миграций и очищен appsettings.json")
++print("Backend: migration flag present; runtime settings come from Compose")
+diff --git a/scripts/prepare_sources.sh b/scripts/prepare_sources.sh
+index 71b5caa..8bf34c1 100644
+--- a/scripts/prepare_sources.sh
++++ b/scripts/prepare_sources.sh
+@@ -2,8 +2,15 @@
+ set -euo pipefail
+ 
+ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+-frontend_sha=e45b40db90fadb7426a2680891d535a9b7dd2106
+-backend_sha=3be60400ea903ea9af59920c0aa941283775732d
++frontend_sha="${FRONTEND_SHA:?Set FRONTEND_SHA to the published frontend integration commit}"
++backend_sha="${BACKEND_SHA:-bf8010db3b4256915dd0d05de93ea7fa29957e2e}"
++
++for sha in "$frontend_sha" "$backend_sha"; do
++    if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
++        echo "Source revisions must be full 40-character commit SHAs" >&2
++        exit 1
++    fi
++done
+ 
+ fetch_source() {
+     local name="$1" repo="$2" sha="$3" path="$root/$1"
+@@ -30,10 +37,27 @@ fetch_source() {
+ fetch_source frontend https://github.com/Perry-Utkonos/Perry-Utkonos-frontend.git "$frontend_sha"
+ fetch_source backend https://github.com/Perry-Utkonos/Perry-Utkonos-backend.git "$backend_sha"
+ 
+-cp "$root/docker/frontend/Dockerfile" "$root/frontend/Dockerfile"
+-cp "$root/docker/frontend/nginx.conf" "$root/frontend/nginx.conf"
+-cp "$root/docker/frontend/.dockerignore" "$root/frontend/.dockerignore"
+-cp "$root/docker/backend/.dockerignore" "$root/backend/.dockerignore"
++for file in Dockerfile nginx.conf .dockerignore; do
++    if [[ ! -f "$root/frontend/$file" ]]; then
++        cp "$root/docker/frontend/$file" "$root/frontend/$file"
++    fi
++done
++
++patch="$root/frontend/integration/backend.patch"
++if [[ ! -f "$patch" ]]; then
++    echo "The selected frontend commit does not contain integration/backend.patch" >&2
++    exit 1
++fi
++if git -C "$root/backend" apply --check "$patch" 2>/dev/null; then
++    git -C "$root/backend" apply "$patch"
++elif ! git -C "$root/backend" apply --reverse --check "$patch" 2>/dev/null; then
++    echo "Backend integration patch does not apply; local files were left untouched" >&2
++    exit 1
++fi
++
++if [[ ! -f "$root/backend/.dockerignore" ]]; then
++    cp "$root/docker/backend/.dockerignore" "$root/backend/.dockerignore"
++fi
+ 
+ python3 "$root/scripts/prepare_backend.py"
+ echo "Исходники подготовлены для docker compose up --build"

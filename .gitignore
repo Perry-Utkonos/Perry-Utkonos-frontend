@@ -12,4 +12,5 @@ design/manifest.json
 .env
 .env.*
 !.env.example
+.backups/
 

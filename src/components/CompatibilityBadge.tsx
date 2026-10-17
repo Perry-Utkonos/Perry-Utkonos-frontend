@@ -1,14 +1,14 @@
 import { Sparkles } from 'lucide-react'
 
 interface CompatibilityBadgeProps {
-  score: number
+  score: number | null
 }
 
 export default function CompatibilityBadge({ score }: CompatibilityBadgeProps) {
   return (
     <span className="compatibility-badge">
       <Sparkles size={13} />
-      {score}% совпадение
+      {score === null ? 'Узнать совместимость' : `${score}% совпадение`}
     </span>
   )
 }

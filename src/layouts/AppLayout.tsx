@@ -14,12 +14,13 @@ const nav = [
 ]
 
 interface AppLayoutProps {
-  match: User | null
+  match: { user: User; conversationId: string } | null
+  me: User
   onCloseMatch: () => void
   unread: number
 }
 
-export default function AppLayout({ match, onCloseMatch, unread }: AppLayoutProps) {
+export default function AppLayout({ match, me, onCloseMatch, unread }: AppLayoutProps) {
   const navigate = useNavigate()
   return (
     <div className="app-frame">
@@ -37,7 +38,7 @@ export default function AppLayout({ match, onCloseMatch, unread }: AppLayoutProp
         <Suspense fallback={<div className="route-loading" role="status">Загрузка…</div>}><Outlet /></Suspense>
       </main>
       <BottomNav />
-      {match && <MatchModal user={match} onClose={onCloseMatch} onContinue={() => {
+      {match && <MatchModal user={match.user} me={me} conversationId={match.conversationId} onClose={onCloseMatch} onContinue={() => {
         onCloseMatch()
         navigate('/')
       }} />}

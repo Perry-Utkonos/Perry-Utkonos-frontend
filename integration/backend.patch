@@ -1,0 +1,2904 @@
+diff --git a/.dockerignore b/.dockerignore
+new file mode 100644
+index 0000000..778ede0
+--- /dev/null
++++ b/.dockerignore
+@@ -0,0 +1,6 @@
++.git
++**/bin
++**/obj
++.env
++.env.*
++*.user
+diff --git a/src/ChatApp.Api/ChatApp.Api.csproj b/src/ChatApp.Api/ChatApp.Api.csproj
+index e8cbfbf..e6de1da 100644
+--- a/src/ChatApp.Api/ChatApp.Api.csproj
++++ b/src/ChatApp.Api/ChatApp.Api.csproj
+@@ -6,6 +6,7 @@
+ 
+   <ItemGroup>
+     <PackageReference Include="Microsoft.AspNetCore.SignalR.StackExchangeRedis" Version="8.0.10" />
++    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="8.0.10" />
+     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.10">
+       <PrivateAssets>all</PrivateAssets>
+     </PackageReference>
+diff --git a/src/ChatApp.Api/Controllers/AuthController.cs b/src/ChatApp.Api/Controllers/AuthController.cs
+index 83d3d0b..80ce87c 100644
+--- a/src/ChatApp.Api/Controllers/AuthController.cs
++++ b/src/ChatApp.Api/Controllers/AuthController.cs
+@@ -8,14 +8,19 @@ using Microsoft.AspNetCore.Mvc;
+ [Route("api/auth")]
+ public class AuthController : ControllerBase
+ {
+-    private readonly IUserService _users;
+-    public AuthController(IUserService users) => _users = users;
++    private readonly IAuthService _auth;
++    public AuthController(IAuthService auth) => _auth = auth;
+ 
+-    /// <summary>
+-    /// Создать пользователя. Токен не выдаётся — для последующих запросов
+-    /// используйте заголовок X-User-Id.
+-    /// </summary>
++    /// <summary>Register an account and issue signed access and refresh tokens.</summary>
+     [HttpPost("register")]
+-    public Task<UserDto> Register([FromBody] RegisterRequest req)
+-        => _users.CreateAsync(req);
++    public Task<AuthResponse> Register([FromBody] RegisterRequest req)
++        => _auth.RegisterAsync(req, HttpContext.RequestAborted);
++
++    [HttpPost("login")]
++    public Task<AuthResponse> Login([FromBody] LoginRequest req)
++        => _auth.LoginAsync(req, HttpContext.RequestAborted);
++
++    [HttpPost("refresh")]
++    public Task<AuthResponse> Refresh([FromBody] RefreshRequest req)
++        => _auth.RefreshAsync(req.RefreshToken, HttpContext.RequestAborted);
+ }
+diff --git a/src/ChatApp.Api/Controllers/ConversationsController.cs b/src/ChatApp.Api/Controllers/ConversationsController.cs
+index 85ed648..bc4c599 100644
+--- a/src/ChatApp.Api/Controllers/ConversationsController.cs
++++ b/src/ChatApp.Api/Controllers/ConversationsController.cs
+@@ -3,8 +3,10 @@ namespace ChatApp.Api.Controllers;
+ using ChatApp.Application.Abstractions;
+ using ChatApp.Application.Dtos;
+ using Microsoft.AspNetCore.Mvc;
++using Microsoft.AspNetCore.Authorization;
+ 
+ [ApiController]
++[Authorize]
+ [Route("api/conversations")]
+ public class ConversationsController : ControllerBase
+ {
+diff --git a/src/ChatApp.Api/Controllers/LikesController.cs b/src/ChatApp.Api/Controllers/LikesController.cs
+new file mode 100644
+index 0000000..86c260c
+--- /dev/null
++++ b/src/ChatApp.Api/Controllers/LikesController.cs
+@@ -0,0 +1,48 @@
++namespace ChatApp.Api.Controllers;
++
++using ChatApp.Application.Abstractions;
++using ChatApp.Application.Dtos;
++using ChatApp.Domain.Exceptions;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++
++[Authorize]
++[ApiController]
++[Route("api/likes")]
++public class LikesController(ChatDbContext db, ICurrentUserProvider current, IConversationService conversations) : ControllerBase
++{
++    [HttpGet]
++    public async Task<LikesDto> List(CancellationToken ct)
++    {
++        var id = current.UserId;
++        return new(await db.Likes.Where(x => x.UserId == id).Select(x => x.TargetUserId).ToArrayAsync(ct),
++            await db.Likes.Where(x => x.TargetUserId == id).Select(x => x.UserId).ToArrayAsync(ct));
++    }
++
++    [HttpPost]
++    public async Task<LikeResult> Like([FromBody] LikeRequest req, CancellationToken ct)
++    {
++        var id = current.UserId;
++        if (id == req.TargetUserId) throw new ValidationException("Cannot like yourself.");
++        if (!await db.Users.AnyAsync(x => x.Id == req.TargetUserId && x.IsActive, ct))
++            throw new NotFoundException("Profile not found.");
++        // Serialize both directions of this pair so concurrent reciprocal likes create one match.
++        await using var transaction = await db.Database.BeginTransactionAsync(ct);
++        var pair = Domain.Entities.Conversation.OrderPair(id, req.TargetUserId);
++        await db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({pair.Item1.ToString() + pair.Item2.ToString()}, 0))", ct);
++        await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO likes (user_id, target_user_id, created_at) VALUES ({id}, {req.TargetUserId}, {DateTime.UtcNow}) ON CONFLICT DO NOTHING", ct);
++        var match = await db.Likes.AnyAsync(x => x.UserId == req.TargetUserId && x.TargetUserId == id, ct);
++        Guid? conversationId = match ? (await conversations.CreateOrGetAsync(id, req.TargetUserId, ct)).Id : null;
++        await transaction.CommitAsync(ct);
++        return new(req.TargetUserId, match, conversationId);
++    }
++
++    [HttpDelete("{targetUserId:guid}")]
++    public async Task<IActionResult> Unlike(Guid targetUserId, CancellationToken ct)
++    {
++        await db.Likes.Where(x => x.UserId == current.UserId && x.TargetUserId == targetUserId).ExecuteDeleteAsync(ct);
++        return NoContent();
++    }
++}
+diff --git a/src/ChatApp.Api/Controllers/PaymentsController.cs b/src/ChatApp.Api/Controllers/PaymentsController.cs
+index bde499f..44ed9ed 100644
+--- a/src/ChatApp.Api/Controllers/PaymentsController.cs
++++ b/src/ChatApp.Api/Controllers/PaymentsController.cs
+@@ -3,8 +3,10 @@ namespace ChatApp.Api.Controllers;
+ using ChatApp.Application.Abstractions;
+ using ChatApp.Application.Dtos;
+ using Microsoft.AspNetCore.Mvc;
++using Microsoft.AspNetCore.Authorization;
+ 
+ [ApiController]
++[Authorize]
+ [Route("api/payments")]
+ public class PaymentsController : ControllerBase
+ {
+@@ -33,6 +35,6 @@ public class PaymentsController : ControllerBase
+     }
+ 
+     [HttpPost("{id:guid}/complete")]
+-    public Task<PaymentDto> Complete(Guid id)
+-        => _payments.CompleteAsync(id);
++    public IActionResult Complete(Guid id)
++        => StatusCode(501, new { error = "Payment provider webhook is not configured. Client-side completion is disabled." });
+ }
+diff --git a/src/ChatApp.Api/Controllers/ProfilesController.cs b/src/ChatApp.Api/Controllers/ProfilesController.cs
+new file mode 100644
+index 0000000..ca9399d
+--- /dev/null
++++ b/src/ChatApp.Api/Controllers/ProfilesController.cs
+@@ -0,0 +1,100 @@
++namespace ChatApp.Api.Controllers;
++
++using System.Text.Json;
++using ChatApp.Application.Abstractions;
++using ChatApp.Application.Dtos;
++using ChatApp.Domain.Entities;
++using ChatApp.Domain.Exceptions;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.AspNetCore.Authorization;
++using Microsoft.AspNetCore.Mvc;
++using Microsoft.EntityFrameworkCore;
++
++[Authorize]
++[ApiController]
++public class ProfilesController(ChatDbContext db, ICurrentUserProvider current) : ControllerBase
++{
++    [HttpGet("api/me")]
++    public async Task<ProfileDto> Me(CancellationToken ct)
++        => UserMapping.ToProfileDto(await CurrentUser(ct));
++
++    [HttpPatch("api/me")]
++    public async Task<ProfileDto> Update([FromBody] JsonElement body, CancellationToken ct)
++    {
++        if (body.ValueKind != JsonValueKind.Object) throw new ValidationException("Expected a profile object.");
++        UpdateProfileRequest req;
++        try { req = body.Deserialize<UpdateProfileRequest>(new JsonSerializerOptions(JsonSerializerDefaults.Web))!; }
++        catch (JsonException) { throw new ValidationException("Invalid profile fields or birth date."); }
++        var user = await CurrentUser(ct);
++        user.Profile ??= new UserProfile { UserId = user.Id, Metadata = "{}" };
++        var profile = user.Profile;
++        var metadata = UserMapping.Metadata(user);
++        bool Has(string field) => body.TryGetProperty(field, out _);
++
++        if (Has("displayName")) metadata = metadata with { DisplayName = Clean(req.DisplayName, 80) ?? user.Username };
++        if (Has("city")) metadata = metadata with { City = Clean(req.City, 120) ?? "" };
++        if (Has("sign")) metadata = metadata with { Sign = Clean(req.Sign, 40) };
++        if (Has("interests")) metadata = metadata with { Interests = CleanList(req.Interests, 30, 80) };
++        if (Has("goals")) metadata = metadata with { Goals = CleanList(req.Goals, 10, 120) };
++        if (Has("photos")) metadata = metadata with { Photos = CleanList(req.Photos, 10, 500, true) };
++        if (Has("bio")) profile.Bio = Clean(req.Bio, 500);
++        if (Has("gender")) profile.Gender = Clean(req.Gender, 16);
++        if (Has("avatarUrl")) profile.AvatarUrl = req.AvatarUrl is null ? null : PhotoUrl(req.AvatarUrl);
++        if (Has("birthDate"))
++        {
++            var today = DateOnly.FromDateTime(DateTime.UtcNow);
++            if (req.BirthDate is DateOnly birth && (birth > today.AddYears(-18) || birth < today.AddYears(-120)))
++                throw new ValidationException("Profile age must be between 18 and 120 years.");
++            profile.BirthDate = req.BirthDate;
++        }
++        profile.Metadata = UserMapping.Serialize(metadata);
++        user.UpdatedAt = DateTime.UtcNow;
++        await db.SaveChangesAsync(ct);
++        return UserMapping.ToProfileDto(user);
++    }
++
++    [HttpGet("api/profiles")]
++    public async Task<IReadOnlyList<ProfileDto>> List(CancellationToken ct, [FromQuery] int limit = 100, [FromQuery] int offset = 0)
++    {
++        if (limit is < 1 or > 200 || offset < 0) throw new ValidationException("Invalid profile page.");
++        var users = await db.Users.AsNoTracking().Include(x => x.Profile)
++            .Where(x => x.IsActive && x.Id != current.UserId)
++            .OrderByDescending(x => x.CreatedAt).ThenBy(x => x.Id).Skip(offset).Take(limit).ToListAsync(ct);
++        return users.Select(UserMapping.ToProfileDto).ToArray();
++    }
++
++    [HttpGet("api/profiles/{id:guid}")]
++    public async Task<ProfileDto> Get(Guid id, CancellationToken ct)
++    {
++        var user = await db.Users.AsNoTracking().Include(x => x.Profile)
++            .FirstOrDefaultAsync(x => x.Id == id && x.IsActive, ct)
++            ?? throw new NotFoundException("Profile not found.");
++        return UserMapping.ToProfileDto(user);
++    }
++
++    private async Task<User> CurrentUser(CancellationToken ct) => await db.Users.Include(x => x.Profile)
++        .FirstOrDefaultAsync(x => x.Id == current.UserId && x.IsActive, ct)
++        ?? throw new UnauthorizedAccessException("Account is unavailable.");
++
++    private static string? Clean(string? value, int max)
++    {
++        value = value?.Trim();
++        if (value?.Length > max) throw new ValidationException($"Profile text exceeds {max} characters.");
++        return string.IsNullOrEmpty(value) ? null : value;
++    }
++
++    private static string[] CleanList(string[]? values, int maxCount, int maxLength, bool urls = false)
++    {
++        if (values?.Length > maxCount) throw new ValidationException($"At most {maxCount} entries are allowed.");
++        return (values ?? []).Select(x => Clean(x, maxLength)).Where(x => x is not null)
++            .Select(x => urls ? PhotoUrl(x!) : x!).Distinct().ToArray();
++    }
++
++    private static string PhotoUrl(string value)
++    {
++        value = Clean(value, 500) ?? throw new ValidationException("Empty photo URL.");
++        if (value.StartsWith('/') && !value.StartsWith("//")) return value;
++        if (Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "https" or "http") return value;
++        throw new ValidationException("Photo must use an HTTP(S) URL or a local absolute path.");
++    }
++}
+diff --git a/src/ChatApp.Api/Controllers/RecommendationsController.cs b/src/ChatApp.Api/Controllers/RecommendationsController.cs
+index 9cbf831..8d62db0 100644
+--- a/src/ChatApp.Api/Controllers/RecommendationsController.cs
++++ b/src/ChatApp.Api/Controllers/RecommendationsController.cs
+@@ -3,8 +3,10 @@ namespace ChatApp.Api.Controllers;
+ using ChatApp.Application.Abstractions;
+ using ChatApp.Application.Dtos;
+ using Microsoft.AspNetCore.Mvc;
++using Microsoft.AspNetCore.Authorization;
+ 
+ [ApiController]
++[Authorize]
+ [Route("api/recommendations")]
+ public class RecommendationsController : ControllerBase
+ {
+@@ -22,9 +24,6 @@ public class RecommendationsController : ControllerBase
+         => _recs.GetForUserAsync(_currentUser.UserId);
+ 
+     [HttpPost("rebuild")]
+-    public async Task<IActionResult> Rebuild()
+-    {
+-        await _recs.RebuildForUserAsync(_currentUser.UserId);
+-        return Accepted();
+-    }
++    public IActionResult Rebuild()
++        => StatusCode(501, new { error = "Recommendation engine is not configured." });
+ }
+diff --git a/src/ChatApp.Api/Handlers/SignalRBroadcastHandler.cs b/src/ChatApp.Api/Handlers/SignalRBroadcastHandler.cs
+index 7a48b3d..1dc6da4 100644
+--- a/src/ChatApp.Api/Handlers/SignalRBroadcastHandler.cs
++++ b/src/ChatApp.Api/Handlers/SignalRBroadcastHandler.cs
+@@ -5,21 +5,25 @@ using ChatApp.Application.Events;
+ using ChatApp.Api.Hubs;
+ using ChatApp.Domain.Enums;
+ using Microsoft.AspNetCore.SignalR;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
+ 
+ public class SignalRBroadcastHandler : IEventHandler<MessageCreatedEvent>
+ {
+     private readonly IHubContext<ChatHub, IChatClient> _hub;
+-    public SignalRBroadcastHandler(IHubContext<ChatHub, IChatClient> hub) => _hub = hub;
++    private readonly ChatDbContext _db;
++    public SignalRBroadcastHandler(IHubContext<ChatHub, IChatClient> hub, ChatDbContext db) { _hub = hub; _db = db; }
+ 
+-    public Task HandleAsync(MessageCreatedEvent evt, CancellationToken ct = default)
++    public async Task HandleAsync(MessageCreatedEvent evt, CancellationToken ct = default)
+     {
+         var dto = new MessageDto(
+             evt.MessageId, evt.ConversationId, evt.SenderId, evt.Seq,
+             evt.Body, MessageType.Text, null,
+             evt.OccurredAt, null, null);
+ 
+-        return _hub.Clients
+-            .Group($"conv:{evt.ConversationId}")
++        var conversation = await _db.Conversations.AsNoTracking().FirstAsync(c => c.Id == evt.ConversationId, ct);
++        await _hub.Clients
++            .Groups(ChatHub.UserGroup(conversation.UserAId), ChatHub.UserGroup(conversation.UserBId))
+             .ReceiveMessage(dto);
+     }
+ }
+diff --git a/src/ChatApp.Api/Hubs/ChatHub.cs b/src/ChatApp.Api/Hubs/ChatHub.cs
+index 64d2710..7ec83e4 100644
+--- a/src/ChatApp.Api/Hubs/ChatHub.cs
++++ b/src/ChatApp.Api/Hubs/ChatHub.cs
+@@ -2,52 +2,64 @@ namespace ChatApp.Api.Hubs;
+ 
+ using ChatApp.Application.Abstractions;
+ using Microsoft.AspNetCore.SignalR;
++using Microsoft.AspNetCore.Authorization;
++using ChatApp.Application.Dtos;
++using ChatApp.Domain.Exceptions;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
+ 
+-/// <summary>
+-/// SignalR Hub. Идентификатор пользователя берётся из ICurrentUserProvider
+-/// (заголовок X-User-Id или ?userId=).
+-/// Broadcast уходит через event bus → SignalRBroadcastHandler.
+-/// </summary>
++/// <summary>Authenticated SignalR messaging with participant validation and per-user delivery.</summary>
++[Authorize]
+ public class ChatHub : Hub<IChatClient>
+ {
+     private readonly IMessageService _messages;
+-    private readonly IConversationService _conversations;
+     private readonly ICurrentUserProvider _currentUser;
++    private readonly ChatDbContext _db;
+ 
+-    public ChatHub(IMessageService messages, IConversationService conversations, ICurrentUserProvider currentUser)
++    public ChatHub(IMessageService messages, ICurrentUserProvider currentUser, ChatDbContext db)
+     {
+         _messages = messages;
+-        _conversations = conversations;
+         _currentUser = currentUser;
++        _db = db;
+     }
+ 
+     public override async Task OnConnectedAsync()
+     {
+         var userId = _currentUser.UserId;
+-        var convIds = await _conversations.GetConversationIdsAsync(userId);
+-        foreach (var id in convIds)
+-            await Groups.AddToGroupAsync(Context.ConnectionId, GroupName(id));
++        await Groups.AddToGroupAsync(Context.ConnectionId, UserGroup(userId));
+         await base.OnConnectedAsync();
+     }
+ 
+-    public Task SendMessage(Guid conversationId, Guid clientMessageId, string body)
++    public Task<MessageDto> SendMessage(Guid conversationId, Guid clientMessageId, string body)
+         => _messages.SendAsync(conversationId, _currentUser.UserId, clientMessageId, body);
+ 
+     public async Task MarkRead(Guid conversationId, long lastReadSeq)
+     {
+         var userId = _currentUser.UserId;
++        var conversation = await GetConversation(conversationId, userId);
++        var peerId = conversation.UserAId == userId ? conversation.UserBId : conversation.UserAId;
++        lastReadSeq = Math.Min(lastReadSeq, conversation.LastSeq);
+         await _messages.MarkReadAsync(conversationId, userId, lastReadSeq);
+-        await Clients.OthersInGroup(GroupName(conversationId))
++        lastReadSeq = await _db.MessageReads.Where(x => x.ConversationId == conversationId && x.UserId == userId)
++            .Select(x => x.LastReadSeq).SingleAsync();
++        await Clients.Group(UserGroup(peerId))
+                      .ReadReceipt(conversationId, userId, lastReadSeq);
+     }
+ 
+     public async Task Typing(Guid conversationId)
+     {
+         var userId = _currentUser.UserId;
+-        await _messages.EnsureParticipantAsync(conversationId, userId);
+-        await Clients.OthersInGroup(GroupName(conversationId))
++        var conversation = await GetConversation(conversationId, userId);
++        var peerId = conversation.UserAId == userId ? conversation.UserBId : conversation.UserAId;
++        await Clients.Group(UserGroup(peerId))
+                      .UserTyping(conversationId, userId);
+     }
+ 
+-    private static string GroupName(Guid conversationId) => $"conv:{conversationId}";
++    private async Task<Domain.Entities.Conversation> GetConversation(Guid conversationId, Guid userId)
++    {
++        return await _db.Conversations.AsNoTracking().FirstOrDefaultAsync(x => x.Id == conversationId && (x.UserAId == userId || x.UserBId == userId))
++            ?? throw new ForbiddenException("Not a participant of this conversation.");
++    }
++
++    public static string UserGroup(Guid userId) => $"user:{userId}";
+ }
+diff --git a/src/ChatApp.Api/Program.cs b/src/ChatApp.Api/Program.cs
+index e7ce03a..30122a7 100644
+--- a/src/ChatApp.Api/Program.cs
++++ b/src/ChatApp.Api/Program.cs
+@@ -10,17 +10,49 @@ using ChatApp.Infrastructure.Repositories;
+ using ChatApp.Infrastructure.Services;
+ using Microsoft.EntityFrameworkCore;
+ using StackExchange.Redis;
++using Microsoft.AspNetCore.Authentication.JwtBearer;
++using Microsoft.IdentityModel.Tokens;
++using System.Text;
+ 
+ var builder = WebApplication.CreateBuilder(args);
++// SignalR WebSocket URLs can contain access_token; omit request URL logs by default.
++builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+ var config = builder.Configuration;
+ 
++var jwt = config.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
++if (string.IsNullOrEmpty(jwt.SigningKey) || Encoding.UTF8.GetByteCount(jwt.SigningKey) < 32)
++    throw new InvalidOperationException("Set Jwt__SigningKey to a random secret containing at least 32 bytes.");
++builder.Services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
++builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
++{
++    options.TokenValidationParameters = new TokenValidationParameters
++    {
++        ValidateIssuer = true, ValidIssuer = jwt.Issuer,
++        ValidateAudience = true, ValidAudience = jwt.Audience,
++        ValidateLifetime = true, ClockSkew = TimeSpan.FromSeconds(30),
++        ValidateIssuerSigningKey = true,
++        IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwt.SigningKey)),
++        ValidAlgorithms = [SecurityAlgorithms.HmacSha256]
++    };
++    options.Events = new JwtBearerEvents
++    {
++        OnMessageReceived = context =>
++        {
++            if (context.Request.Path.StartsWithSegments("/hubs/chat"))
++                context.Token = context.Request.Query["access_token"];
++            return Task.CompletedTask;
++        }
++    };
++});
++builder.Services.AddAuthorization();
++
+ // ---------- DbContext ----------
+ builder.Services.AddDbContext<ChatDbContext>(opt =>
+     opt.UseNpgsql(config.GetConnectionString("Postgres"),
+         npg => npg.MigrationsAssembly(typeof(ChatDbContext).Assembly.FullName)));
+ 
+ // ---------- Event Bus ----------
+-builder.Services.AddSingleton<IEventBus, InProcessEventBus>();
++builder.Services.AddScoped<IEventBus, InProcessEventBus>();
+ builder.Services.AddScoped<IEventHandler<MessageCreatedEvent>, NotificationHandler>();
+ builder.Services.AddScoped<IEventHandler<MessageCreatedEvent>, SearchIndexerHandler>();
+ builder.Services.AddScoped<IEventHandler<MessageCreatedEvent>, SignalRBroadcastHandler>();
+@@ -36,7 +68,10 @@ if (hasRedis)
+ 
+ // ---------- SignalR ----------
+ var signalR = builder.Services.AddSignalR(o =>
+-    o.EnableDetailedErrors = builder.Environment.IsDevelopment());
++{
++    o.EnableDetailedErrors = builder.Environment.IsDevelopment();
++    o.MaximumReceiveMessageSize = 65536;
++});
+ 
+ if (hasRedis)
+ {
+@@ -59,6 +94,8 @@ builder.Services.AddScoped<IRecommendationRepository, RecommendationRepository>(
+ 
+ // ---------- Application services ----------
+ builder.Services.AddScoped<IUserService, UserService>();
++builder.Services.AddScoped<IAuthService, AuthService>();
++builder.Services.AddScoped<ITokenIssuer, JwtTokenIssuer>();
+ builder.Services.AddScoped<IConversationService, ConversationService>();
+ builder.Services.AddScoped<IMessageService, MessageService>();
+ builder.Services.AddScoped<IPaymentService, PaymentService>();
+@@ -70,11 +107,11 @@ builder.Services.AddControllers();
+ builder.Services.AddEndpointsApiExplorer();
+ builder.Services.AddSwaggerGen();
+ 
++var origins = config.GetSection("Cors:Origins").Get<string[]>() ?? [];
+ builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
+-    p.SetIsOriginAllowed(_ => true)
+-     .AllowAnyHeader()
+-     .AllowAnyMethod()
+-     .AllowCredentials()));
++{
++    if (origins.Length > 0) p.WithOrigins(origins).AllowAnyHeader().AllowAnyMethod().AllowCredentials();
++}));
+ 
+ var app = builder.Build();
+ 
+@@ -86,20 +123,20 @@ if (app.Environment.IsDevelopment())
+ 
+ app.UseCors();
+ app.UseMiddleware<ExceptionHandlingMiddleware>();
++app.UseAuthentication();
++app.UseAuthorization();
+ 
+ app.MapControllers();
+-app.MapHub<ChatHub>("/hubs/chat");
++app.MapHub<ChatHub>("/hubs/chat", options => options.CloseOnAuthenticationExpiration = true);
++app.MapGet("/api/health", async (ChatDbContext db, CancellationToken ct) =>
++    await db.Database.CanConnectAsync(ct) ? Results.Ok(new { status = "ok" }) : Results.StatusCode(503));
+ 
+-if (app.Environment.IsDevelopment())
++if (config.GetValue<bool>("Database:ApplyMigrations"))
+ {
+     using var scope = app.Services.CreateScope();
+     var db = scope.ServiceProvider.GetRequiredService<ChatDbContext>();
+     var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+-    try { await db.Database.MigrateAsync(); }
+-    catch (Exception ex)
+-    {
+-        logger.LogError(ex, "Не удалось применить миграции. Проверьте connection string.");
+-    }
++    await db.Database.MigrateAsync();
+ }
+ 
+ app.Run();
+diff --git a/src/ChatApp.Api/Services/HttpContextCurrentUserProvider.cs b/src/ChatApp.Api/Services/HttpContextCurrentUserProvider.cs
+index ee571cd..a25c413 100644
+--- a/src/ChatApp.Api/Services/HttpContextCurrentUserProvider.cs
++++ b/src/ChatApp.Api/Services/HttpContextCurrentUserProvider.cs
+@@ -2,17 +2,11 @@ namespace ChatApp.Api.Services;
+ 
+ using ChatApp.Application.Abstractions;
+ using ChatApp.Domain.Exceptions;
++using System.Security.Claims;
+ 
+-/// <summary>
+-/// Временная замена авторизации.
+-/// REST: заголовок X-User-Id
+-/// SignalR: query-параметр ?userId=
+-/// </summary>
++/// <summary>Resolve the current user exclusively from a validated JWT claim.</summary>
+ public class HttpContextCurrentUserProvider : ICurrentUserProvider
+ {
+-    public const string HeaderName = "X-User-Id";
+-    public const string QueryName = "userId";
+-
+     private readonly IHttpContextAccessor _http;
+     private Guid? _cached;
+     private bool _resolved;
+@@ -26,9 +20,7 @@ public class HttpContextCurrentUserProvider : ICurrentUserProvider
+         get
+         {
+             if (!TryResolve(out var id))
+-                throw new ForbiddenException(
+-                    $"User identity is missing. Provide '{HeaderName}' header " +
+-                    $"or '{QueryName}' query parameter.");
++                throw new UnauthorizedAccessException("Authentication is required.");
+             return id;
+         }
+     }
+@@ -42,14 +34,8 @@ public class HttpContextCurrentUserProvider : ICurrentUserProvider
+         var ctx = _http.HttpContext;
+         if (ctx is null) return false;
+ 
+-        if (ctx.Request.Headers.TryGetValue(HeaderName, out var h) &&
+-            Guid.TryParse(h.ToString(), out id))
+-        {
+-            _cached = id; return true;
+-        }
+-
+-        if (ctx.Request.Query.TryGetValue(QueryName, out var q) &&
+-            Guid.TryParse(q.ToString(), out id))
++        if (ctx.User.Identity?.IsAuthenticated == true &&
++            Guid.TryParse(ctx.User.FindFirstValue(ClaimTypes.NameIdentifier), out id))
+         {
+             _cached = id; return true;
+         }
+diff --git a/src/ChatApp.Application/Abstractions/ITokenIssuer.cs b/src/ChatApp.Application/Abstractions/ITokenIssuer.cs
+new file mode 100644
+index 0000000..f837e9e
+--- /dev/null
++++ b/src/ChatApp.Application/Abstractions/ITokenIssuer.cs
+@@ -0,0 +1,10 @@
++namespace ChatApp.Application.Abstractions;
++
++using ChatApp.Application.Dtos;
++using ChatApp.Domain.Entities;
++
++public interface ITokenIssuer
++{
++    Task<AuthResponse> IssueAsync(User user, CancellationToken ct = default);
++    Task<AuthResponse> RefreshAsync(string refreshToken, CancellationToken ct = default);
++}
+diff --git a/src/ChatApp.Application/Abstractions/IUserRepository.cs b/src/ChatApp.Application/Abstractions/IUserRepository.cs
+index bbed607..6a4c50c 100644
+--- a/src/ChatApp.Application/Abstractions/IUserRepository.cs
++++ b/src/ChatApp.Application/Abstractions/IUserRepository.cs
+@@ -5,6 +5,7 @@ using ChatApp.Domain.Entities;
+ public interface IUserRepository
+ {
+     Task<User?> FindByIdAsync(Guid id, CancellationToken ct = default);
++    Task<User?> FindByUsernameOrEmailAsync(string value, CancellationToken ct = default);
+     Task<bool> ExistsByUsernameAsync(string username, CancellationToken ct = default);
+     Task<bool> ExistsByEmailAsync(string email, CancellationToken ct = default);
+     Task AddAsync(User user, CancellationToken ct = default);
+diff --git a/src/ChatApp.Application/Dtos/UserDtos.cs b/src/ChatApp.Application/Dtos/UserDtos.cs
+index dedac4b..daa52ae 100644
+--- a/src/ChatApp.Application/Dtos/UserDtos.cs
++++ b/src/ChatApp.Application/Dtos/UserDtos.cs
+@@ -1,15 +1,59 @@
+ namespace ChatApp.Application.Dtos;
+ 
+-public record RegisterRequest(
+-    string Username,
+-    string Email,
+-    string Password,
+-    string? DisplayName);
+-
+-public record UserDto(
+-    Guid Id,
+-    string Username,
+-    string Email,
+-    string? DisplayName,
+-    string? AvatarUrl,
+-    DateTime? LastSeenAt);
++using System.Text.Json;
++using ChatApp.Domain.Entities;
++
++public record ProfileDto(
++    Guid Id, string Username, string DisplayName, string? AvatarUrl, DateTime? LastSeenAt,
++    int? Age, DateOnly? BirthDate, string City, string Bio, string[] Interests,
++    string? Sign, string[] Photos, string[] Goals, string? Gender);
++
++public record UpdateProfileRequest(
++    string? DisplayName, DateOnly? BirthDate, string? City, string? Bio,
++    string[]? Interests, string? Sign, string[]? Photos, string[]? Goals,
++    string? Gender, string? AvatarUrl);
++
++public record LikeRequest(Guid TargetUserId);
++public record LikeResult(Guid TargetUserId, bool IsMatch, Guid? ConversationId);
++public record LikesDto(IReadOnlyList<Guid> LikedUserIds, IReadOnlyList<Guid> IncomingUserIds);
++
++public record ProfileMetadata(
++    string? DisplayName = null, string City = "", string[]? Interests = null,
++    string? Sign = null, string[]? Photos = null, string[]? Goals = null);
++
++public static class UserMapping
++{
++    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
++
++    public static ProfileMetadata Metadata(User user)
++    {
++        try { return JsonSerializer.Deserialize<ProfileMetadata>(user.Profile?.Metadata ?? "{}", JsonOptions) ?? new(); }
++        catch (JsonException) { return new(); }
++    }
++
++    public static string Serialize(ProfileMetadata metadata) => JsonSerializer.Serialize(metadata, JsonOptions);
++
++    public static UserDto ToUserDto(User user)
++    {
++        var metadata = Metadata(user);
++        return new(user.Id, user.Username, user.Email, metadata.DisplayName ?? user.Username,
++            user.Profile?.AvatarUrl, user.LastSeenAt);
++    }
++
++    public static ProfileDto ToProfileDto(User user)
++    {
++        var metadata = Metadata(user);
++        var profile = user.Profile;
++        int? age = null;
++        if (profile?.BirthDate is DateOnly birth)
++        {
++            var today = DateOnly.FromDateTime(DateTime.UtcNow);
++            age = today.Year - birth.Year;
++            if (birth.AddYears(age.Value) > today) age--;
++        }
++        return new(user.Id, user.Username, metadata.DisplayName ?? user.Username,
++            profile?.AvatarUrl, user.LastSeenAt, age, profile?.BirthDate,
++            metadata.City, profile?.Bio ?? "", metadata.Interests ?? [], metadata.Sign,
++            metadata.Photos ?? [], metadata.Goals ?? [], profile?.Gender);
++    }
++}
+diff --git a/src/ChatApp.Application/Services/AuthService.cs b/src/ChatApp.Application/Services/AuthService.cs
+index 9e13fb0..055f4b5 100644
+--- a/src/ChatApp.Application/Services/AuthService.cs
++++ b/src/ChatApp.Application/Services/AuthService.cs
+@@ -24,11 +24,16 @@ public class AuthService : IAuthService
+ 
+     public async Task<AuthResponse> RegisterAsync(RegisterRequest request, CancellationToken ct = default)
+     {
+-        if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Length < 3)
+-            throw new ValidationException("Username must be at least 3 characters.");
++        if (string.IsNullOrWhiteSpace(request.Username) || request.Username.Trim().Length is < 3 or > 32)
++            throw new ValidationException("Username must contain 3 to 32 characters.");
+ 
+-        if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
+-            throw new ValidationException("Password must be at least 8 characters.");
++        if (string.IsNullOrWhiteSpace(request.Password) || System.Text.Encoding.UTF8.GetByteCount(request.Password) is < 8 or > 72)
++            throw new ValidationException("Password must contain 8 to 72 UTF-8 bytes.");
++
++        if (string.IsNullOrWhiteSpace(request.Email) || request.Email.Length > 255 || !new System.ComponentModel.DataAnnotations.EmailAddressAttribute().IsValid(request.Email))
++            throw new ValidationException("A valid email is required.");
++        if (request.DisplayName?.Length > 80)
++            throw new ValidationException("Display name must not exceed 80 characters.");
+ 
+         if (await _users.ExistsByUsernameAsync(request.Username, ct))
+             throw new ConflictException("Username is already taken.");
+@@ -38,12 +43,12 @@ public class AuthService : IAuthService
+ 
+         var user = new User
+         {
+-            Username = request.Username.Trim(),
++            Username = request.Username.Trim().ToLowerInvariant(),
+             Email = request.Email.Trim().ToLowerInvariant(),
+             PasswordHash = _hasher.Hash(request.Password),
+             Profile = new UserProfile
+             {
+-                Metadata = "{}"
++                Metadata = UserMapping.Serialize(new ProfileMetadata(DisplayName: request.DisplayName?.Trim()))
+             }
+         };
+ 
+@@ -55,14 +60,16 @@ public class AuthService : IAuthService
+ 
+     public async Task<AuthResponse> LoginAsync(LoginRequest request, CancellationToken ct = default)
+     {
++        if (string.IsNullOrWhiteSpace(request.UsernameOrEmail) || string.IsNullOrEmpty(request.Password))
++            throw new UnauthorizedAccessException("Invalid credentials.");
+         var user = await _users.FindByUsernameOrEmailAsync(request.UsernameOrEmail, ct)
+-            ?? throw new ForbiddenException("Invalid credentials.");
++            ?? throw new UnauthorizedAccessException("Invalid credentials.");
+ 
+         if (!user.IsActive)
+-            throw new ForbiddenException("Account is disabled.");
++            throw new UnauthorizedAccessException("Invalid credentials.");
+ 
+         if (!_hasher.Verify(request.Password, user.PasswordHash))
+-            throw new ForbiddenException("Invalid credentials.");
++            throw new UnauthorizedAccessException("Invalid credentials.");
+ 
+         return await _tokens.IssueAsync(user, ct);
+     }
+diff --git a/src/ChatApp.Application/Services/MessageService.cs b/src/ChatApp.Application/Services/MessageService.cs
+index 05c499f..675db1c 100644
+--- a/src/ChatApp.Application/Services/MessageService.cs
++++ b/src/ChatApp.Application/Services/MessageService.cs
+@@ -21,11 +21,16 @@ public class MessageService : IMessageService
+         if (clientMessageId == Guid.Empty)
+             throw new ValidationException("clientMessageId is required.");
+ 
++        await _messages.EnsureParticipantAsync(conversationId, senderId, ct);
+         return await _messages.SendAsync(conversationId, senderId, clientMessageId, body, ct);
+     }
+ 
+-    public Task MarkReadAsync(Guid conversationId, Guid userId, long lastReadSeq, CancellationToken ct = default)
+-        => _messages.MarkReadAsync(conversationId, userId, lastReadSeq, ct);
++    public async Task MarkReadAsync(Guid conversationId, Guid userId, long lastReadSeq, CancellationToken ct = default)
++    {
++        if (lastReadSeq < 0) throw new ValidationException("Read sequence must not be negative.");
++        await _messages.EnsureParticipantAsync(conversationId, userId, ct);
++        await _messages.MarkReadAsync(conversationId, userId, lastReadSeq, ct);
++    }
+ 
+     public Task EnsureParticipantAsync(Guid conversationId, Guid userId, CancellationToken ct = default)
+         => _messages.EnsureParticipantAsync(conversationId, userId, ct);
+diff --git a/src/ChatApp.Domain/Entities/Like.cs b/src/ChatApp.Domain/Entities/Like.cs
+new file mode 100644
+index 0000000..406c91e
+--- /dev/null
++++ b/src/ChatApp.Domain/Entities/Like.cs
+@@ -0,0 +1,10 @@
++namespace ChatApp.Domain.Entities;
++
++public class Like
++{
++    public Guid UserId { get; set; }
++    public Guid TargetUserId { get; set; }
++    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
++    public User User { get; set; } = default!;
++    public User TargetUser { get; set; } = default!;
++}
+diff --git a/src/ChatApp.Infrastructure/ChatApp.Infrastructure.csproj b/src/ChatApp.Infrastructure/ChatApp.Infrastructure.csproj
+index c269c8a..3edb795 100644
+--- a/src/ChatApp.Infrastructure/ChatApp.Infrastructure.csproj
++++ b/src/ChatApp.Infrastructure/ChatApp.Infrastructure.csproj
+@@ -12,6 +12,9 @@
+     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="8.0.10" />
+     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="8.0.10" />
+     <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
++    <PackageReference Include="System.IdentityModel.Tokens.Jwt" Version="8.0.2" />
++    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
++    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.1" />
+   </ItemGroup>
+ 
+   <ItemGroup>
+diff --git a/src/ChatApp.Infrastructure/Persistence/ChatDbContext.cs b/src/ChatApp.Infrastructure/Persistence/ChatDbContext.cs
+index 808f1d3..4c39877 100644
+--- a/src/ChatApp.Infrastructure/Persistence/ChatDbContext.cs
++++ b/src/ChatApp.Infrastructure/Persistence/ChatDbContext.cs
+@@ -11,6 +11,7 @@ public class ChatDbContext : DbContext
+     public DbSet<User> Users => Set<User>();
+     public DbSet<UserProfile> UserProfiles => Set<UserProfile>();
+     public DbSet<RefreshToken> RefreshTokens => Set<RefreshToken>();
++    public DbSet<Like> Likes => Set<Like>();
+ 
+     // Chat
+     public DbSet<Conversation> Conversations => Set<Conversation>();
+diff --git a/src/ChatApp.Infrastructure/Persistence/ChatDbContextFactory.cs b/src/ChatApp.Infrastructure/Persistence/ChatDbContextFactory.cs
+new file mode 100644
+index 0000000..683ebb6
+--- /dev/null
++++ b/src/ChatApp.Infrastructure/Persistence/ChatDbContextFactory.cs
+@@ -0,0 +1,14 @@
++namespace ChatApp.Infrastructure.Persistence;
++
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Design;
++
++public class ChatDbContextFactory : IDesignTimeDbContextFactory<ChatDbContext>
++{
++    public ChatDbContext CreateDbContext(string[] args)
++    {
++        var connection = Environment.GetEnvironmentVariable("ConnectionStrings__Postgres")
++            ?? "Host=localhost;Database=fate;Username=fate";
++        return new ChatDbContext(new DbContextOptionsBuilder<ChatDbContext>().UseNpgsql(connection).Options);
++    }
++}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Configurations/LikeConfiguration.cs b/src/ChatApp.Infrastructure/Persistence/Configurations/LikeConfiguration.cs
+new file mode 100644
+index 0000000..34fa29c
+--- /dev/null
++++ b/src/ChatApp.Infrastructure/Persistence/Configurations/LikeConfiguration.cs
+@@ -0,0 +1,19 @@
++namespace ChatApp.Infrastructure.Persistence.Configurations;
++
++using ChatApp.Domain.Entities;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Metadata.Builders;
++
++public class LikeConfiguration : IEntityTypeConfiguration<Like>
++{
++    public void Configure(EntityTypeBuilder<Like> b)
++    {
++        b.ToTable("likes");
++        b.HasKey(x => new { x.UserId, x.TargetUserId });
++        b.Property(x => x.UserId).HasColumnName("user_id");
++        b.Property(x => x.TargetUserId).HasColumnName("target_user_id");
++        b.Property(x => x.CreatedAt).HasColumnName("created_at");
++        b.HasOne(x => x.User).WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
++        b.HasOne(x => x.TargetUser).WithMany().HasForeignKey(x => x.TargetUserId).OnDelete(DeleteBehavior.Cascade);
++    }
++}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Configurations/MessageConfiguration.cs b/src/ChatApp.Infrastructure/Persistence/Configurations/MessageConfiguration.cs
+index 0faa91c..e103f1c 100644
+--- a/src/ChatApp.Infrastructure/Persistence/Configurations/MessageConfiguration.cs
++++ b/src/ChatApp.Infrastructure/Persistence/Configurations/MessageConfiguration.cs
+@@ -32,43 +32,3 @@ public class MessageConfiguration : IEntityTypeConfiguration<Message>
+             .HasForeignKey(x => x.ReplyToId).OnDelete(DeleteBehavior.SetNull);
+     }
+ }
+-
+-public class MessageReadConfiguration : IEntityTypeConfiguration<MessageRead>
+-{
+-    public void Configure(EntityTypeBuilder<MessageRead> b)
+-    {
+-        b.ToTable("message_reads");
+-        b.HasKey(x => new { x.ConversationId, x.UserId });
+-        b.Property(x => x.ConversationId).HasColumnName("conversation_id");
+-        b.Property(x => x.UserId).HasColumnName("user_id");
+-        b.Property(x => x.LastReadSeq).HasColumnName("last_read_seq").HasDefaultValue(0L);
+-        b.Property(x => x.LastReadAt).HasColumnName("last_read_at");
+-
+-        b.HasOne(x => x.Conversation).WithMany(c => c.Reads)
+-            .HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
+-        b.HasOne(x => x.User).WithMany(u => u.MessageReads)
+-            .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+-    }
+-}
+-
+-public class AttachmentConfiguration : IEntityTypeConfiguration<Attachment>
+-{
+-    public void Configure(EntityTypeBuilder<Attachment> b)
+-    {
+-        b.ToTable("attachments");
+-        b.HasKey(x => x.Id);
+-        b.Property(x => x.Id).HasColumnName("id");
+-        b.Property(x => x.MessageId).HasColumnName("message_id");
+-        b.Property(x => x.FileName).HasColumnName("file_name").IsRequired().HasMaxLength(255);
+-        b.Property(x => x.MimeType).HasColumnName("mime_type").IsRequired().HasMaxLength(128);
+-        b.Property(x => x.SizeBytes).HasColumnName("size_bytes");
+-        b.Property(x => x.StorageKey).HasColumnName("storage_key").IsRequired().HasMaxLength(500);
+-        b.Property(x => x.Width).HasColumnName("width");
+-        b.Property(x => x.Height).HasColumnName("height");
+-        b.Property(x => x.Checksum).HasColumnName("checksum").HasMaxLength(64);
+-        b.Property(x => x.CreatedAt).HasColumnName("created_at");
+-        b.HasIndex(x => x.MessageId);
+-        b.HasOne(x => x.Message).WithMany(m => m.Attachments)
+-            .HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+-    }
+-}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Configurations/UserConfiguration.cs b/src/ChatApp.Infrastructure/Persistence/Configurations/UserConfiguration.cs
+index 13bcbdb..36424f6 100644
+--- a/src/ChatApp.Infrastructure/Persistence/Configurations/UserConfiguration.cs
++++ b/src/ChatApp.Infrastructure/Persistence/Configurations/UserConfiguration.cs
+@@ -45,21 +45,3 @@ public class UserProfileConfiguration : IEntityTypeConfiguration<UserProfile>
+         b.Property(x => x.CreatedAt).HasColumnName("created_at");
+     }
+ }
+-
+-public class RefreshTokenConfiguration : IEntityTypeConfiguration<RefreshToken>
+-{
+-    public void Configure(EntityTypeBuilder<RefreshToken> b)
+-    {
+-        b.ToTable("refresh_tokens");
+-        b.HasKey(x => x.Id);
+-        b.Property(x => x.Id).HasColumnName("id");
+-        b.Property(x => x.UserId).HasColumnName("user_id");
+-        b.Property(x => x.TokenHash).HasColumnName("token_hash").IsRequired().HasMaxLength(128);
+-        b.Property(x => x.ExpiresAt).HasColumnName("expires_at");
+-        b.Property(x => x.CreatedAt).HasColumnName("created_at");
+-        b.Property(x => x.RevokedAt).HasColumnName("revoked_at");
+-        b.HasIndex(x => x.TokenHash).IsUnique();
+-        b.HasOne(x => x.User).WithMany(u => u.RefreshTokens)
+-            .HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+-    }
+-}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.Designer.cs b/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.Designer.cs
+new file mode 100644
+index 0000000..1ba980a
+--- /dev/null
++++ b/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.Designer.cs
+@@ -0,0 +1,673 @@
++﻿// <auto-generated />
++using System;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Migrations;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
++
++#nullable disable
++
++namespace ChatApp.Infrastructure.Persistence.Migrations
++{
++    [DbContext(typeof(ChatDbContext))]
++    [Migration("20261017005733_InitialFateIntegration")]
++    partial class InitialFateIntegration
++    {
++        /// <inheritdoc />
++        protected override void BuildTargetModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasAnnotation("ProductVersion", "8.0.10")
++                .HasAnnotation("Relational:MaxIdentifierLength", 63);
++
++            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Attachment", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<string>("Checksum")
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("checksum");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("FileName")
++                        .IsRequired()
++                        .HasMaxLength(255)
++                        .HasColumnType("character varying(255)")
++                        .HasColumnName("file_name");
++
++                    b.Property<int?>("Height")
++                        .HasColumnType("integer")
++                        .HasColumnName("height");
++
++                    b.Property<Guid>("MessageId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("message_id");
++
++                    b.Property<string>("MimeType")
++                        .IsRequired()
++                        .HasMaxLength(128)
++                        .HasColumnType("character varying(128)")
++                        .HasColumnName("mime_type");
++
++                    b.Property<long>("SizeBytes")
++                        .HasColumnType("bigint")
++                        .HasColumnName("size_bytes");
++
++                    b.Property<string>("StorageKey")
++                        .IsRequired()
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("storage_key");
++
++                    b.Property<int?>("Width")
++                        .HasColumnType("integer")
++                        .HasColumnName("width");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("MessageId");
++
++                    b.ToTable("attachments", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime?>("LastMessageAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_message_at");
++
++                    b.Property<string>("LastMessageBody")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("last_message_body");
++
++                    b.Property<Guid?>("LastMessageId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("last_message_id");
++
++                    b.Property<long>("LastSeq")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint")
++                        .HasDefaultValue(0L)
++                        .HasColumnName("last_seq");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("updated_at");
++
++                    b.Property<Guid>("UserAId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_a_id");
++
++                    b.Property<Guid>("UserBId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_b_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("LastMessageId");
++
++                    b.HasIndex("UserAId", "LastMessageAt");
++
++                    b.HasIndex("UserAId", "UserBId")
++                        .IsUnique();
++
++                    b.HasIndex("UserBId", "LastMessageAt");
++
++                    b.ToTable("conversations", null, t =>
++                        {
++                            t.HasCheckConstraint("chk_conv_order", "user_a_id < user_b_id");
++                        });
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Like", b =>
++                {
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<Guid>("TargetUserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("target_user_id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.HasKey("UserId", "TargetUserId");
++
++                    b.HasIndex("TargetUserId");
++
++                    b.ToTable("likes", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<string>("Body")
++                        .HasMaxLength(8000)
++                        .HasColumnType("character varying(8000)")
++                        .HasColumnName("body");
++
++                    b.Property<Guid>("ConversationId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("conversation_id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime?>("DeletedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("deleted_at");
++
++                    b.Property<DateTime?>("EditedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("edited_at");
++
++                    b.Property<string>("Metadata")
++                        .HasColumnType("jsonb")
++                        .HasColumnName("metadata");
++
++                    b.Property<Guid?>("ReplyToId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("reply_to_id");
++
++                    b.Property<Guid>("SenderId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("sender_id");
++
++                    b.Property<long>("Seq")
++                        .HasColumnType("bigint")
++                        .HasColumnName("seq");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("message_type");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("ReplyToId");
++
++                    b.HasIndex("SenderId");
++
++                    b.HasIndex("ConversationId", "Seq")
++                        .IsUnique();
++
++                    b.ToTable("messages", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.MessageRead", b =>
++                {
++                    b.Property<Guid>("ConversationId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("conversation_id");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<DateTime>("LastReadAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_read_at");
++
++                    b.Property<long>("LastReadSeq")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint")
++                        .HasDefaultValue(0L)
++                        .HasColumnName("last_read_seq");
++
++                    b.HasKey("ConversationId", "UserId");
++
++                    b.HasIndex("UserId");
++
++                    b.ToTable("message_reads", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.OutboxMessage", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<int>("Attempts")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("integer")
++                        .HasDefaultValue(0)
++                        .HasColumnName("attempts");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Error")
++                        .HasMaxLength(2000)
++                        .HasColumnType("character varying(2000)")
++                        .HasColumnName("error");
++
++                    b.Property<string>("Payload")
++                        .IsRequired()
++                        .HasColumnType("jsonb")
++                        .HasColumnName("payload");
++
++                    b.Property<DateTime?>("PublishedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("published_at");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("type");
++
++                    b.HasKey("Id");
++
++                    b.ToTable("outbox_messages", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Payment", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<decimal>("Amount")
++                        .HasPrecision(18, 2)
++                        .HasColumnType("numeric(18,2)")
++                        .HasColumnName("amount");
++
++                    b.Property<DateTime?>("CompletedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("completed_at");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Currency")
++                        .IsRequired()
++                        .HasMaxLength(3)
++                        .HasColumnType("character varying(3)")
++                        .HasColumnName("currency");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("purpose");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("status");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("UserId", "CreatedAt");
++
++                    b.ToTable("payments", "pay");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Recommendation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Reason")
++                        .IsRequired()
++                        .HasMaxLength(256)
++                        .HasColumnType("character varying(256)")
++                        .HasColumnName("reason");
++
++                    b.Property<double>("Score")
++                        .HasColumnType("double precision")
++                        .HasColumnName("score");
++
++                    b.Property<Guid>("TargetUserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("target_user_id");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("UserId", "Score");
++
++                    b.HasIndex("UserId", "TargetUserId")
++                        .IsUnique();
++
++                    b.ToTable("recommendations", "rec");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.RefreshToken", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("expires_at");
++
++                    b.Property<DateTime?>("RevokedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("revoked_at");
++
++                    b.Property<string>("TokenHash")
++                        .IsRequired()
++                        .HasMaxLength(128)
++                        .HasColumnType("character varying(128)")
++                        .HasColumnName("token_hash");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("TokenHash")
++                        .IsUnique();
++
++                    b.HasIndex("UserId");
++
++                    b.ToTable("refresh_tokens", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.User", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasMaxLength(255)
++                        .HasColumnType("character varying(255)")
++                        .HasColumnName("email");
++
++                    b.Property<bool>("IsActive")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("boolean")
++                        .HasDefaultValue(true)
++                        .HasColumnName("is_active");
++
++                    b.Property<DateTime?>("LastSeenAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_seen_at");
++
++                    b.Property<string>("PasswordHash")
++                        .IsRequired()
++                        .HasColumnType("text")
++                        .HasColumnName("password_hash");
++
++                    b.Property<string>("PhoneNumber")
++                        .HasMaxLength(32)
++                        .HasColumnType("character varying(32)")
++                        .HasColumnName("phone_number");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("updated_at");
++
++                    b.Property<string>("Username")
++                        .IsRequired()
++                        .HasMaxLength(32)
++                        .HasColumnType("character varying(32)")
++                        .HasColumnName("username");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("Username")
++                        .IsUnique();
++
++                    b.ToTable("users", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.UserProfile", b =>
++                {
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<string>("AvatarUrl")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("avatar_url");
++
++                    b.Property<string>("Bio")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("bio");
++
++                    b.Property<DateOnly?>("BirthDate")
++                        .HasColumnType("date")
++                        .HasColumnName("birth_date");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Gender")
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("gender");
++
++                    b.Property<string>("Metadata")
++                        .HasColumnType("jsonb")
++                        .HasColumnName("metadata");
++
++                    b.HasKey("UserId");
++
++                    b.ToTable("user_profile", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Attachment", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Message", "Message")
++                        .WithMany("Attachments")
++                        .HasForeignKey("MessageId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Message");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Message", "LastMessage")
++                        .WithMany()
++                        .HasForeignKey("LastMessageId")
++                        .OnDelete(DeleteBehavior.SetNull);
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "UserA")
++                        .WithMany("ConversationsAsUserA")
++                        .HasForeignKey("UserAId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "UserB")
++                        .WithMany("ConversationsAsUserB")
++                        .HasForeignKey("UserBId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("LastMessage");
++
++                    b.Navigation("UserA");
++
++                    b.Navigation("UserB");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Like", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "TargetUser")
++                        .WithMany()
++                        .HasForeignKey("TargetUserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany()
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("TargetUser");
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Conversation", "Conversation")
++                        .WithMany("Messages")
++                        .HasForeignKey("ConversationId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.Message", "ReplyTo")
++                        .WithMany("Replies")
++                        .HasForeignKey("ReplyToId")
++                        .OnDelete(DeleteBehavior.SetNull);
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "Sender")
++                        .WithMany("Messages")
++                        .HasForeignKey("SenderId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Conversation");
++
++                    b.Navigation("ReplyTo");
++
++                    b.Navigation("Sender");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.MessageRead", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Conversation", "Conversation")
++                        .WithMany("Reads")
++                        .HasForeignKey("ConversationId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany("MessageReads")
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Conversation");
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.RefreshToken", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany("RefreshTokens")
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.UserProfile", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithOne("Profile")
++                        .HasForeignKey("ChatApp.Domain.Entities.UserProfile", "UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.Navigation("Messages");
++
++                    b.Navigation("Reads");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.Navigation("Attachments");
++
++                    b.Navigation("Replies");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.User", b =>
++                {
++                    b.Navigation("ConversationsAsUserA");
++
++                    b.Navigation("ConversationsAsUserB");
++
++                    b.Navigation("MessageReads");
++
++                    b.Navigation("Messages");
++
++                    b.Navigation("Profile");
++
++                    b.Navigation("RefreshTokens");
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.cs b/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.cs
+new file mode 100644
+index 0000000..1c1f3e6
+--- /dev/null
++++ b/src/ChatApp.Infrastructure/Persistence/Migrations/20261017005733_InitialFateIntegration.cs
+@@ -0,0 +1,433 @@
++﻿using System;
++using Microsoft.EntityFrameworkCore.Migrations;
++
++#nullable disable
++
++namespace ChatApp.Infrastructure.Persistence.Migrations
++{
++    /// <inheritdoc />
++    public partial class InitialFateIntegration : Migration
++    {
++        /// <inheritdoc />
++        protected override void Up(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.EnsureSchema(
++                name: "pay");
++
++            migrationBuilder.EnsureSchema(
++                name: "rec");
++
++            migrationBuilder.CreateTable(
++                name: "outbox_messages",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    type = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
++                    payload = table.Column<string>(type: "jsonb", nullable: false),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    published_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
++                    error = table.Column<string>(type: "character varying(2000)", maxLength: 2000, nullable: true),
++                    attempts = table.Column<int>(type: "integer", nullable: false, defaultValue: 0)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_outbox_messages", x => x.id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "payments",
++                schema: "pay",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    amount = table.Column<decimal>(type: "numeric(18,2)", precision: 18, scale: 2, nullable: false),
++                    currency = table.Column<string>(type: "character varying(3)", maxLength: 3, nullable: false),
++                    purpose = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: false),
++                    status = table.Column<string>(type: "character varying(16)", maxLength: 16, nullable: false),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    completed_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_payments", x => x.id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "recommendations",
++                schema: "rec",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    target_user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    score = table.Column<double>(type: "double precision", nullable: false),
++                    reason = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_recommendations", x => x.id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "users",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    username = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: false),
++                    email = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
++                    phone_number = table.Column<string>(type: "character varying(32)", maxLength: 32, nullable: true),
++                    password_hash = table.Column<string>(type: "text", nullable: false),
++                    is_active = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
++                    last_seen_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_users", x => x.id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "likes",
++                columns: table => new
++                {
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    target_user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_likes", x => new { x.user_id, x.target_user_id });
++                    table.ForeignKey(
++                        name: "FK_likes_users_target_user_id",
++                        column: x => x.target_user_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                    table.ForeignKey(
++                        name: "FK_likes_users_user_id",
++                        column: x => x.user_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "refresh_tokens",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    token_hash = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
++                    expires_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    revoked_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_refresh_tokens", x => x.id);
++                    table.ForeignKey(
++                        name: "FK_refresh_tokens_users_user_id",
++                        column: x => x.user_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "user_profile",
++                columns: table => new
++                {
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    bio = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
++                    avatar_url = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
++                    birth_date = table.Column<DateOnly>(type: "date", nullable: true),
++                    gender = table.Column<string>(type: "character varying(16)", maxLength: 16, nullable: true),
++                    metadata = table.Column<string>(type: "jsonb", nullable: true),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_user_profile", x => x.user_id);
++                    table.ForeignKey(
++                        name: "FK_user_profile_users_user_id",
++                        column: x => x.user_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "attachments",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    message_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    file_name = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
++                    mime_type = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
++                    size_bytes = table.Column<long>(type: "bigint", nullable: false),
++                    storage_key = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
++                    width = table.Column<int>(type: "integer", nullable: true),
++                    height = table.Column<int>(type: "integer", nullable: true),
++                    checksum = table.Column<string>(type: "character varying(64)", maxLength: 64, nullable: true),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_attachments", x => x.id);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "conversations",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_a_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_b_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    last_seq = table.Column<long>(type: "bigint", nullable: false, defaultValue: 0L),
++                    last_message_id = table.Column<Guid>(type: "uuid", nullable: true),
++                    last_message_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
++                    last_message_body = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    updated_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_conversations", x => x.id);
++                    table.CheckConstraint("chk_conv_order", "user_a_id < user_b_id");
++                    table.ForeignKey(
++                        name: "FK_conversations_users_user_a_id",
++                        column: x => x.user_a_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                    table.ForeignKey(
++                        name: "FK_conversations_users_user_b_id",
++                        column: x => x.user_b_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "message_reads",
++                columns: table => new
++                {
++                    conversation_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    user_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    last_read_seq = table.Column<long>(type: "bigint", nullable: false, defaultValue: 0L),
++                    last_read_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_message_reads", x => new { x.conversation_id, x.user_id });
++                    table.ForeignKey(
++                        name: "FK_message_reads_conversations_conversation_id",
++                        column: x => x.conversation_id,
++                        principalTable: "conversations",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                    table.ForeignKey(
++                        name: "FK_message_reads_users_user_id",
++                        column: x => x.user_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateTable(
++                name: "messages",
++                columns: table => new
++                {
++                    id = table.Column<Guid>(type: "uuid", nullable: false),
++                    conversation_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    sender_id = table.Column<Guid>(type: "uuid", nullable: false),
++                    seq = table.Column<long>(type: "bigint", nullable: false),
++                    body = table.Column<string>(type: "character varying(8000)", maxLength: 8000, nullable: true),
++                    message_type = table.Column<string>(type: "character varying(16)", maxLength: 16, nullable: false),
++                    reply_to_id = table.Column<Guid>(type: "uuid", nullable: true),
++                    metadata = table.Column<string>(type: "jsonb", nullable: true),
++                    created_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
++                    edited_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
++                    deleted_at = table.Column<DateTime>(type: "timestamp with time zone", nullable: true)
++                },
++                constraints: table =>
++                {
++                    table.PrimaryKey("PK_messages", x => x.id);
++                    table.ForeignKey(
++                        name: "FK_messages_conversations_conversation_id",
++                        column: x => x.conversation_id,
++                        principalTable: "conversations",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                    table.ForeignKey(
++                        name: "FK_messages_messages_reply_to_id",
++                        column: x => x.reply_to_id,
++                        principalTable: "messages",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.SetNull);
++                    table.ForeignKey(
++                        name: "FK_messages_users_sender_id",
++                        column: x => x.sender_id,
++                        principalTable: "users",
++                        principalColumn: "id",
++                        onDelete: ReferentialAction.Cascade);
++                });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_attachments_message_id",
++                table: "attachments",
++                column: "message_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_conversations_last_message_id",
++                table: "conversations",
++                column: "last_message_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_conversations_user_a_id_last_message_at",
++                table: "conversations",
++                columns: new[] { "user_a_id", "last_message_at" });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_conversations_user_a_id_user_b_id",
++                table: "conversations",
++                columns: new[] { "user_a_id", "user_b_id" },
++                unique: true);
++
++            migrationBuilder.CreateIndex(
++                name: "IX_conversations_user_b_id_last_message_at",
++                table: "conversations",
++                columns: new[] { "user_b_id", "last_message_at" });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_likes_target_user_id",
++                table: "likes",
++                column: "target_user_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_message_reads_user_id",
++                table: "message_reads",
++                column: "user_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_messages_conversation_id_seq",
++                table: "messages",
++                columns: new[] { "conversation_id", "seq" },
++                unique: true);
++
++            migrationBuilder.CreateIndex(
++                name: "IX_messages_reply_to_id",
++                table: "messages",
++                column: "reply_to_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_messages_sender_id",
++                table: "messages",
++                column: "sender_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_payments_user_id_created_at",
++                schema: "pay",
++                table: "payments",
++                columns: new[] { "user_id", "created_at" });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_recommendations_user_id_score",
++                schema: "rec",
++                table: "recommendations",
++                columns: new[] { "user_id", "score" });
++
++            migrationBuilder.CreateIndex(
++                name: "IX_recommendations_user_id_target_user_id",
++                schema: "rec",
++                table: "recommendations",
++                columns: new[] { "user_id", "target_user_id" },
++                unique: true);
++
++            migrationBuilder.CreateIndex(
++                name: "IX_refresh_tokens_token_hash",
++                table: "refresh_tokens",
++                column: "token_hash",
++                unique: true);
++
++            migrationBuilder.CreateIndex(
++                name: "IX_refresh_tokens_user_id",
++                table: "refresh_tokens",
++                column: "user_id");
++
++            migrationBuilder.CreateIndex(
++                name: "IX_users_email",
++                table: "users",
++                column: "email",
++                unique: true);
++
++            migrationBuilder.CreateIndex(
++                name: "IX_users_username",
++                table: "users",
++                column: "username",
++                unique: true);
++
++            migrationBuilder.AddForeignKey(
++                name: "FK_attachments_messages_message_id",
++                table: "attachments",
++                column: "message_id",
++                principalTable: "messages",
++                principalColumn: "id",
++                onDelete: ReferentialAction.Cascade);
++
++            migrationBuilder.AddForeignKey(
++                name: "FK_conversations_messages_last_message_id",
++                table: "conversations",
++                column: "last_message_id",
++                principalTable: "messages",
++                principalColumn: "id",
++                onDelete: ReferentialAction.SetNull);
++        }
++
++        /// <inheritdoc />
++        protected override void Down(MigrationBuilder migrationBuilder)
++        {
++            migrationBuilder.DropForeignKey(
++                name: "FK_conversations_messages_last_message_id",
++                table: "conversations");
++
++            migrationBuilder.DropTable(
++                name: "attachments");
++
++            migrationBuilder.DropTable(
++                name: "likes");
++
++            migrationBuilder.DropTable(
++                name: "message_reads");
++
++            migrationBuilder.DropTable(
++                name: "outbox_messages");
++
++            migrationBuilder.DropTable(
++                name: "payments",
++                schema: "pay");
++
++            migrationBuilder.DropTable(
++                name: "recommendations",
++                schema: "rec");
++
++            migrationBuilder.DropTable(
++                name: "refresh_tokens");
++
++            migrationBuilder.DropTable(
++                name: "user_profile");
++
++            migrationBuilder.DropTable(
++                name: "messages");
++
++            migrationBuilder.DropTable(
++                name: "conversations");
++
++            migrationBuilder.DropTable(
++                name: "users");
++        }
++    }
++}
+diff --git a/src/ChatApp.Infrastructure/Persistence/Migrations/ChatDbContextModelSnapshot.cs b/src/ChatApp.Infrastructure/Persistence/Migrations/ChatDbContextModelSnapshot.cs
+new file mode 100644
+index 0000000..de6fe1c
+--- /dev/null
++++ b/src/ChatApp.Infrastructure/Persistence/Migrations/ChatDbContextModelSnapshot.cs
+@@ -0,0 +1,670 @@
++﻿// <auto-generated />
++using System;
++using ChatApp.Infrastructure.Persistence;
++using Microsoft.EntityFrameworkCore;
++using Microsoft.EntityFrameworkCore.Infrastructure;
++using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
++using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
++
++#nullable disable
++
++namespace ChatApp.Infrastructure.Persistence.Migrations
++{
++    [DbContext(typeof(ChatDbContext))]
++    partial class ChatDbContextModelSnapshot : ModelSnapshot
++    {
++        protected override void BuildModel(ModelBuilder modelBuilder)
++        {
++#pragma warning disable 612, 618
++            modelBuilder
++                .HasAnnotation("ProductVersion", "8.0.10")
++                .HasAnnotation("Relational:MaxIdentifierLength", 63);
++
++            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Attachment", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<string>("Checksum")
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("checksum");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("FileName")
++                        .IsRequired()
++                        .HasMaxLength(255)
++                        .HasColumnType("character varying(255)")
++                        .HasColumnName("file_name");
++
++                    b.Property<int?>("Height")
++                        .HasColumnType("integer")
++                        .HasColumnName("height");
++
++                    b.Property<Guid>("MessageId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("message_id");
++
++                    b.Property<string>("MimeType")
++                        .IsRequired()
++                        .HasMaxLength(128)
++                        .HasColumnType("character varying(128)")
++                        .HasColumnName("mime_type");
++
++                    b.Property<long>("SizeBytes")
++                        .HasColumnType("bigint")
++                        .HasColumnName("size_bytes");
++
++                    b.Property<string>("StorageKey")
++                        .IsRequired()
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("storage_key");
++
++                    b.Property<int?>("Width")
++                        .HasColumnType("integer")
++                        .HasColumnName("width");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("MessageId");
++
++                    b.ToTable("attachments", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime?>("LastMessageAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_message_at");
++
++                    b.Property<string>("LastMessageBody")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("last_message_body");
++
++                    b.Property<Guid?>("LastMessageId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("last_message_id");
++
++                    b.Property<long>("LastSeq")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint")
++                        .HasDefaultValue(0L)
++                        .HasColumnName("last_seq");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("updated_at");
++
++                    b.Property<Guid>("UserAId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_a_id");
++
++                    b.Property<Guid>("UserBId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_b_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("LastMessageId");
++
++                    b.HasIndex("UserAId", "LastMessageAt");
++
++                    b.HasIndex("UserAId", "UserBId")
++                        .IsUnique();
++
++                    b.HasIndex("UserBId", "LastMessageAt");
++
++                    b.ToTable("conversations", null, t =>
++                        {
++                            t.HasCheckConstraint("chk_conv_order", "user_a_id < user_b_id");
++                        });
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Like", b =>
++                {
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<Guid>("TargetUserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("target_user_id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.HasKey("UserId", "TargetUserId");
++
++                    b.HasIndex("TargetUserId");
++
++                    b.ToTable("likes", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<string>("Body")
++                        .HasMaxLength(8000)
++                        .HasColumnType("character varying(8000)")
++                        .HasColumnName("body");
++
++                    b.Property<Guid>("ConversationId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("conversation_id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime?>("DeletedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("deleted_at");
++
++                    b.Property<DateTime?>("EditedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("edited_at");
++
++                    b.Property<string>("Metadata")
++                        .HasColumnType("jsonb")
++                        .HasColumnName("metadata");
++
++                    b.Property<Guid?>("ReplyToId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("reply_to_id");
++
++                    b.Property<Guid>("SenderId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("sender_id");
++
++                    b.Property<long>("Seq")
++                        .HasColumnType("bigint")
++                        .HasColumnName("seq");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("message_type");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("ReplyToId");
++
++                    b.HasIndex("SenderId");
++
++                    b.HasIndex("ConversationId", "Seq")
++                        .IsUnique();
++
++                    b.ToTable("messages", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.MessageRead", b =>
++                {
++                    b.Property<Guid>("ConversationId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("conversation_id");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<DateTime>("LastReadAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_read_at");
++
++                    b.Property<long>("LastReadSeq")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("bigint")
++                        .HasDefaultValue(0L)
++                        .HasColumnName("last_read_seq");
++
++                    b.HasKey("ConversationId", "UserId");
++
++                    b.HasIndex("UserId");
++
++                    b.ToTable("message_reads", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.OutboxMessage", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<int>("Attempts")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("integer")
++                        .HasDefaultValue(0)
++                        .HasColumnName("attempts");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Error")
++                        .HasMaxLength(2000)
++                        .HasColumnType("character varying(2000)")
++                        .HasColumnName("error");
++
++                    b.Property<string>("Payload")
++                        .IsRequired()
++                        .HasColumnType("jsonb")
++                        .HasColumnName("payload");
++
++                    b.Property<DateTime?>("PublishedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("published_at");
++
++                    b.Property<string>("Type")
++                        .IsRequired()
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("type");
++
++                    b.HasKey("Id");
++
++                    b.ToTable("outbox_messages", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Payment", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<decimal>("Amount")
++                        .HasPrecision(18, 2)
++                        .HasColumnType("numeric(18,2)")
++                        .HasColumnName("amount");
++
++                    b.Property<DateTime?>("CompletedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("completed_at");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Currency")
++                        .IsRequired()
++                        .HasMaxLength(3)
++                        .HasColumnType("character varying(3)")
++                        .HasColumnName("currency");
++
++                    b.Property<string>("Purpose")
++                        .IsRequired()
++                        .HasMaxLength(64)
++                        .HasColumnType("character varying(64)")
++                        .HasColumnName("purpose");
++
++                    b.Property<string>("Status")
++                        .IsRequired()
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("status");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("UserId", "CreatedAt");
++
++                    b.ToTable("payments", "pay");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Recommendation", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Reason")
++                        .IsRequired()
++                        .HasMaxLength(256)
++                        .HasColumnType("character varying(256)")
++                        .HasColumnName("reason");
++
++                    b.Property<double>("Score")
++                        .HasColumnType("double precision")
++                        .HasColumnName("score");
++
++                    b.Property<Guid>("TargetUserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("target_user_id");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("UserId", "Score");
++
++                    b.HasIndex("UserId", "TargetUserId")
++                        .IsUnique();
++
++                    b.ToTable("recommendations", "rec");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.RefreshToken", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<DateTime>("ExpiresAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("expires_at");
++
++                    b.Property<DateTime?>("RevokedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("revoked_at");
++
++                    b.Property<string>("TokenHash")
++                        .IsRequired()
++                        .HasMaxLength(128)
++                        .HasColumnType("character varying(128)")
++                        .HasColumnName("token_hash");
++
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("TokenHash")
++                        .IsUnique();
++
++                    b.HasIndex("UserId");
++
++                    b.ToTable("refresh_tokens", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.User", b =>
++                {
++                    b.Property<Guid>("Id")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("uuid")
++                        .HasColumnName("id");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Email")
++                        .IsRequired()
++                        .HasMaxLength(255)
++                        .HasColumnType("character varying(255)")
++                        .HasColumnName("email");
++
++                    b.Property<bool>("IsActive")
++                        .ValueGeneratedOnAdd()
++                        .HasColumnType("boolean")
++                        .HasDefaultValue(true)
++                        .HasColumnName("is_active");
++
++                    b.Property<DateTime?>("LastSeenAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("last_seen_at");
++
++                    b.Property<string>("PasswordHash")
++                        .IsRequired()
++                        .HasColumnType("text")
++                        .HasColumnName("password_hash");
++
++                    b.Property<string>("PhoneNumber")
++                        .HasMaxLength(32)
++                        .HasColumnType("character varying(32)")
++                        .HasColumnName("phone_number");
++
++                    b.Property<DateTime>("UpdatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("updated_at");
++
++                    b.Property<string>("Username")
++                        .IsRequired()
++                        .HasMaxLength(32)
++                        .HasColumnType("character varying(32)")
++                        .HasColumnName("username");
++
++                    b.HasKey("Id");
++
++                    b.HasIndex("Email")
++                        .IsUnique();
++
++                    b.HasIndex("Username")
++                        .IsUnique();
++
++                    b.ToTable("users", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.UserProfile", b =>
++                {
++                    b.Property<Guid>("UserId")
++                        .HasColumnType("uuid")
++                        .HasColumnName("user_id");
++
++                    b.Property<string>("AvatarUrl")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("avatar_url");
++
++                    b.Property<string>("Bio")
++                        .HasMaxLength(500)
++                        .HasColumnType("character varying(500)")
++                        .HasColumnName("bio");
++
++                    b.Property<DateOnly?>("BirthDate")
++                        .HasColumnType("date")
++                        .HasColumnName("birth_date");
++
++                    b.Property<DateTime>("CreatedAt")
++                        .HasColumnType("timestamp with time zone")
++                        .HasColumnName("created_at");
++
++                    b.Property<string>("Gender")
++                        .HasMaxLength(16)
++                        .HasColumnType("character varying(16)")
++                        .HasColumnName("gender");
++
++                    b.Property<string>("Metadata")
++                        .HasColumnType("jsonb")
++                        .HasColumnName("metadata");
++
++                    b.HasKey("UserId");
++
++                    b.ToTable("user_profile", (string)null);
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Attachment", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Message", "Message")
++                        .WithMany("Attachments")
++                        .HasForeignKey("MessageId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Message");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Message", "LastMessage")
++                        .WithMany()
++                        .HasForeignKey("LastMessageId")
++                        .OnDelete(DeleteBehavior.SetNull);
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "UserA")
++                        .WithMany("ConversationsAsUserA")
++                        .HasForeignKey("UserAId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "UserB")
++                        .WithMany("ConversationsAsUserB")
++                        .HasForeignKey("UserBId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("LastMessage");
++
++                    b.Navigation("UserA");
++
++                    b.Navigation("UserB");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Like", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "TargetUser")
++                        .WithMany()
++                        .HasForeignKey("TargetUserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany()
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("TargetUser");
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Conversation", "Conversation")
++                        .WithMany("Messages")
++                        .HasForeignKey("ConversationId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.Message", "ReplyTo")
++                        .WithMany("Replies")
++                        .HasForeignKey("ReplyToId")
++                        .OnDelete(DeleteBehavior.SetNull);
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "Sender")
++                        .WithMany("Messages")
++                        .HasForeignKey("SenderId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Conversation");
++
++                    b.Navigation("ReplyTo");
++
++                    b.Navigation("Sender");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.MessageRead", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.Conversation", "Conversation")
++                        .WithMany("Reads")
++                        .HasForeignKey("ConversationId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany("MessageReads")
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("Conversation");
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.RefreshToken", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithMany("RefreshTokens")
++                        .HasForeignKey("UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.UserProfile", b =>
++                {
++                    b.HasOne("ChatApp.Domain.Entities.User", "User")
++                        .WithOne("Profile")
++                        .HasForeignKey("ChatApp.Domain.Entities.UserProfile", "UserId")
++                        .OnDelete(DeleteBehavior.Cascade)
++                        .IsRequired();
++
++                    b.Navigation("User");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Conversation", b =>
++                {
++                    b.Navigation("Messages");
++
++                    b.Navigation("Reads");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.Message", b =>
++                {
++                    b.Navigation("Attachments");
++
++                    b.Navigation("Replies");
++                });
++
++            modelBuilder.Entity("ChatApp.Domain.Entities.User", b =>
++                {
++                    b.Navigation("ConversationsAsUserA");
++
++                    b.Navigation("ConversationsAsUserB");
++
++                    b.Navigation("MessageReads");
++
++                    b.Navigation("Messages");
++
++                    b.Navigation("Profile");
++
++                    b.Navigation("RefreshTokens");
++                });
++#pragma warning restore 612, 618
++        }
++    }
++}
+diff --git a/src/ChatApp.Infrastructure/Repositories/ConversationRepository.cs b/src/ChatApp.Infrastructure/Repositories/ConversationRepository.cs
+index 321073d..74374f3 100644
+--- a/src/ChatApp.Infrastructure/Repositories/ConversationRepository.cs
++++ b/src/ChatApp.Infrastructure/Repositories/ConversationRepository.cs
+@@ -18,6 +18,7 @@ public class ConversationRepository : IConversationRepository
+             .Where(c => c.UserAId == userId || c.UserBId == userId)
+             .Include(c => c.UserA).ThenInclude(u => u.Profile)
+             .Include(c => c.UserB).ThenInclude(u => u.Profile)
++            .Include(c => c.LastMessage)
+             .OrderByDescending(c => c.LastMessageAt)
+             .Take(100)
+             .ToListAsync(ct);
+@@ -38,7 +39,7 @@ public class ConversationRepository : IConversationRepository
+             result.Add(new ConversationDto(
+                 c.Id,
+                 ToUserDto(c.UserAId == userId ? c.UserB : c.UserA),
+-                c.LastMessageBody, c.LastMessageAt, c.LastMessageId,
++                c.LastMessageBody, c.LastMessageAt, c.LastMessage?.SenderId,
+                 c.LastSeq, unread));
+         }
+         return result;
+@@ -51,9 +52,12 @@ public class ConversationRepository : IConversationRepository
+ 
+     public async Task<ConversationDto> CreateOrGetAsync(Guid currentUserId, Guid userA, Guid userB, CancellationToken ct = default)
+     {
++        await using var transaction = _db.Database.CurrentTransaction is null ? await _db.Database.BeginTransactionAsync(ct) : null;
++        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({userA.ToString() + userB.ToString()}, 0))", ct);
+         var existing = await _db.Conversations
+             .Include(c => c.UserA).ThenInclude(u => u.Profile)
+             .Include(c => c.UserB).ThenInclude(u => u.Profile)
++            .Include(c => c.LastMessage)
+             .FirstOrDefaultAsync(c => c.UserAId == userA && c.UserBId == userB, ct);
+ 
+         if (existing is not null) return ToDto(existing, currentUserId);
+@@ -65,6 +69,7 @@ public class ConversationRepository : IConversationRepository
+         _db.MessageReads.Add(new MessageRead { ConversationId = conv.Id, UserId = userB, LastReadSeq = 0 });
+ 
+         await _db.SaveChangesAsync(ct);
++        if (transaction is not null) await transaction.CommitAsync(ct);
+ 
+         var peer = await _db.Users.Include(u => u.Profile)
+             .FirstAsync(u => u.Id == (currentUserId == userA ? userB : userA), ct);
+@@ -104,10 +109,8 @@ public class ConversationRepository : IConversationRepository
+     {
+         var peer = c.UserAId == currentUserId ? c.UserB : c.UserA;
+         return new ConversationDto(c.Id, ToUserDto(peer),
+-            c.LastMessageBody, c.LastMessageAt, c.LastMessageId, c.LastSeq, 0);
++            c.LastMessageBody, c.LastMessageAt, c.LastMessage?.SenderId, c.LastSeq, 0);
+     }
+ 
+-    private static UserDto ToUserDto(User u) => new(
+-        u.Id, u.Username, u.Email,
+-        u.Profile?.Bio, u.Profile?.AvatarUrl, u.LastSeenAt);
++    private static UserDto ToUserDto(User u) => UserMapping.ToUserDto(u);
+ }
+diff --git a/src/ChatApp.Infrastructure/Repositories/MessageRepository.cs b/src/ChatApp.Infrastructure/Repositories/MessageRepository.cs
+index 1e4050e..62bf36b 100644
+--- a/src/ChatApp.Infrastructure/Repositories/MessageRepository.cs
++++ b/src/ChatApp.Infrastructure/Repositories/MessageRepository.cs
+@@ -25,11 +25,16 @@ public class MessageRepository : IMessageRepository
+         Guid conversationId, Guid senderId, Guid clientMessageId, string body,
+         CancellationToken ct = default)
+     {
++        await using var tx = await _db.Database.BeginTransactionAsync(ct);
++        await _db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock(hashtextextended({clientMessageId.ToString()}, 1))", ct);
+         var existing = await _db.Messages.AsNoTracking()
+             .FirstOrDefaultAsync(m => m.Id == clientMessageId, ct);
+-        if (existing is not null) return ToDto(existing);
+-
+-        await using var tx = await _db.Database.BeginTransactionAsync(ct);
++        if (existing is not null)
++        {
++            if (existing.ConversationId != conversationId || existing.SenderId != senderId)
++                throw new ConflictException("Message id belongs to another message.");
++            return ToDto(existing);
++        }
+ 
+         var seq = await IncrementSeqAsync(conversationId, senderId, ct);
+         if (seq is null)
+@@ -98,7 +103,8 @@ public class MessageRepository : IMessageRepository
+     {
+         await _db.Database.ExecuteSqlRawAsync(@"
+             INSERT INTO message_reads (conversation_id, user_id, last_read_seq, last_read_at)
+-            VALUES ({0}, {1}, {2}, now())
++            SELECT {0}, {1}, LEAST({2}, last_seq), now()
++              FROM conversations WHERE id = {0} AND (user_a_id = {1} OR user_b_id = {1})
+             ON CONFLICT (conversation_id, user_id)
+             DO UPDATE SET
+                 last_read_seq = GREATEST(message_reads.last_read_seq, EXCLUDED.last_read_seq),
+diff --git a/src/ChatApp.Infrastructure/Repositories/UserRepository.cs b/src/ChatApp.Infrastructure/Repositories/UserRepository.cs
+index 8fe2507..f042136 100644
+--- a/src/ChatApp.Infrastructure/Repositories/UserRepository.cs
++++ b/src/ChatApp.Infrastructure/Repositories/UserRepository.cs
+@@ -4,6 +4,8 @@ using ChatApp.Application.Abstractions;
+ using ChatApp.Domain.Entities;
+ using ChatApp.Infrastructure.Persistence;
+ using Microsoft.EntityFrameworkCore;
++using ChatApp.Domain.Exceptions;
++using Npgsql;
+ 
+ public class UserRepository : IUserRepository
+ {
+@@ -13,6 +15,13 @@ public class UserRepository : IUserRepository
+     public Task<User?> FindByIdAsync(Guid id, CancellationToken ct = default)
+         => _db.Users.Include(u => u.Profile).FirstOrDefaultAsync(u => u.Id == id, ct);
+ 
++    public Task<User?> FindByUsernameOrEmailAsync(string value, CancellationToken ct = default)
++    {
++        var normalized = value.Trim().ToLowerInvariant();
++        return _db.Users.Include(u => u.Profile).FirstOrDefaultAsync(
++            u => u.Username.ToLower() == normalized || u.Email.ToLower() == normalized, ct);
++    }
++
+     public Task<bool> ExistsByUsernameAsync(string username, CancellationToken ct = default)
+     {
+         var v = username.Trim().ToLowerInvariant();
+@@ -28,6 +37,10 @@ public class UserRepository : IUserRepository
+     public async Task AddAsync(User user, CancellationToken ct = default)
+         => await _db.Users.AddAsync(user, ct);
+ 
+-    public Task SaveChangesAsync(CancellationToken ct = default)
+-        => _db.SaveChangesAsync(ct);
++    public async Task SaveChangesAsync(CancellationToken ct = default)
++    {
++        try { await _db.SaveChangesAsync(ct); }
++        catch (DbUpdateException ex) when (ex.InnerException is PostgresException { SqlState: "23505" })
++        { throw new ConflictException("Username or email is already registered."); }
++    }
+ }
+diff --git a/src/ChatApp.Infrastructure/Services/JwtTokenIssuer.cs b/src/ChatApp.Infrastructure/Services/JwtTokenIssuer.cs
+index a61daf3..f91df4d 100644
+--- a/src/ChatApp.Infrastructure/Services/JwtTokenIssuer.cs
++++ b/src/ChatApp.Infrastructure/Services/JwtTokenIssuer.cs
+@@ -26,6 +26,7 @@ public class JwtTokenIssuer : ITokenIssuer
+ 
+     public async Task<AuthResponse> IssueAsync(User user, CancellationToken ct = default)
+     {
++        user.LastSeenAt = DateTime.UtcNow;
+         var accessToken = CreateAccessToken(user, out var expiresAt);
+         var refreshToken = await CreateAndStoreRefreshTokenAsync(user, ct);
+ 
+@@ -33,24 +34,29 @@ public class JwtTokenIssuer : ITokenIssuer
+             accessToken,
+             refreshToken,
+             expiresAt,
+-            ToDto(user));
++            UserMapping.ToUserDto(user));
+     }
+ 
+     public async Task<AuthResponse> RefreshAsync(string refreshToken, CancellationToken ct = default)
+     {
++        if (string.IsNullOrWhiteSpace(refreshToken) || refreshToken.Length > 512)
++            throw new UnauthorizedAccessException("Invalid refresh token.");
++        await using var transaction = await _db.Database.BeginTransactionAsync(ct);
+         var hash = HashToken(refreshToken);
+ 
+         var stored = await _db.RefreshTokens
++            .FromSqlInterpolated($"SELECT * FROM refresh_tokens WHERE token_hash = {hash} FOR UPDATE")
+             .Include(t => t.User).ThenInclude(u => u.Profile)
+-            .FirstOrDefaultAsync(t => t.TokenHash == hash, ct)
+-            ?? throw new ForbiddenException("Invalid refresh token.");
++            .FirstOrDefaultAsync(ct)
++            ?? throw new UnauthorizedAccessException("Invalid refresh token.");
+ 
+-        if (!stored.IsActive)
+-            throw new ForbiddenException("Refresh token is expired or revoked.");
++        if (!stored.IsActive || !stored.User.IsActive)
++            throw new UnauthorizedAccessException("Refresh token is expired or revoked.");
+ 
+         stored.RevokedAt = DateTime.UtcNow;
+         var response = await IssueAsync(stored.User, ct);
+         await _db.SaveChangesAsync(ct);
++        await transaction.CommitAsync(ct);
+ 
+         return response;
+     }
+@@ -103,11 +109,4 @@ public class JwtTokenIssuer : ITokenIssuer
+         return Convert.ToHexString(bytes).ToLowerInvariant();
+     }
+ 
+-    private static UserDto ToDto(User u) => new(
+-        u.Id,
+-        u.Username,
+-        u.Email,
+-        u.Profile?.Bio,
+-        u.Profile?.AvatarUrl,
+-        u.LastSeenAt);
+ }

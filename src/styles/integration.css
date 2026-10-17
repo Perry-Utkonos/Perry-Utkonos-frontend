@@ -1,0 +1,33 @@
+.auth-page { min-height: 100dvh; display: grid; place-items: center; padding: 24px; background: var(--bg) var(--outer-art) center / cover fixed; }
+.auth-card { width: 100%; max-width: 420px; padding: 32px; border: 1px solid var(--line); border-radius: 24px; background: var(--page-bg); }
+.auth-card h1 { font: 800 26px Manrope, sans-serif; margin: 24px 0 10px; }
+.auth-card > p { color: var(--muted); font-size: 13px; line-height: 1.6; }
+.auth-switch { width: 100%; margin-top: 20px; min-height: 36px; }
+.profile-form { display: grid; gap: 16px; margin-top: 24px; }
+.profile-form label { display: grid; gap: 7px; font-size: 12px; font-weight: 600; color: var(--muted); }
+.profile-form input, .profile-form textarea, .profile-form select { width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; }
+.profile-form textarea { min-height: 90px; resize: vertical; }
+.profile-form textarea:focus-visible, .profile-form select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.form-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.api-error { color: var(--text); padding: 12px; border: 1px solid #b75c74; border-radius: 12px; font-size: 12px; line-height: 1.6; background: var(--surface); }
+.api-notice, .saved-notice { color: var(--muted); font-size: 12px; line-height: 1.7; }
+.page-state { display: grid; justify-items: center; align-content: center; gap: 12px; padding: 36px 20px; min-height: 240px; text-align: center; }
+.page-state h2 { margin: 0; font: 700 20px Manrope, sans-serif; }
+.page-state p { max-width: 380px; margin: 0; color: var(--muted); font-size: 13px; line-height: 1.7; }
+.account-actions { display: flex; gap: 12px; justify-content: center; margin: 20px 0; }
+.chat-status { margin: 0; padding: 7px 16px; text-align: center; color: var(--muted); font-size: 11px; }
+.messages .load-history { align-self: center; min-height: 34px; font-size: 11px; }
+.message-bubble { overflow-wrap: anywhere; white-space: pre-wrap; }
+.chat-error { margin: 0 14px 8px; }
+.typing-hint { min-height: 18px; padding: 0 18px; color: var(--muted); font-size: 10px; }
+.read-check { margin-left: 4px; }
+.chat-list-start { margin-bottom: 20px; }
+.conversation-form { display: flex; align-items: end; gap: 10px; }
+.conversation-form label { flex: 1; }
+.conversation-form .button { min-height: 42px; }
+.payment-status { display: grid; gap: 8px; margin: 22px 0; }
+.payment-status p { margin: 0; font-size: 12px; line-height: 1.6; }
+.profile-form small { color: var(--muted); font-weight: 400; line-height: 1.5; }
+.feed-page .page-state { background: var(--page-bg); border-radius: 24px; max-width: 520px; margin: 0 auto; }
+.feed-onboarding { width: 100%; max-width: 520px; margin: 0 auto 16px; padding: 12px; border-radius: 12px; background: var(--page-bg); }
+@media (max-width: 380px) { .auth-card { padding: 22px; } .conversation-form { flex-wrap: wrap; } }

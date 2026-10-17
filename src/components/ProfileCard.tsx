@@ -2,16 +2,18 @@ import { useRef, useState, type PointerEvent } from 'react'
 import { Check, MapPin, X } from 'lucide-react'
 import type { User } from '../types'
 import CompatibilityBadge from './CompatibilityBadge'
+import Avatar from './Avatar'
 
 interface ProfileCardProps {
   user: User
   onOpen: () => void
   onSkip: () => void
-  onLike: () => void
+  onLike: () => void | Promise<void>
   onIntent: () => void
+  disabled?: boolean
 }
 
-export default function ProfileCard({ user, onOpen, onSkip, onLike, onIntent }: ProfileCardProps) {
+export default function ProfileCard({ user, onOpen, onSkip, onLike, onIntent, disabled = false }: ProfileCardProps) {
   const pointerStart = useRef<{ x: number; y: number } | null>(null)
   const suppressClick = useRef(false)
   const [dragX, setDragX] = useState(0)
@@ -20,6 +22,7 @@ export default function ProfileCard({ user, onOpen, onSkip, onLike, onIntent }: 
   const [exitDirection, setExitDirection] = useState<'left' | 'right' | null>(null)
 
   function onPointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (disabled || exitDirection) return
     if (event.pointerType === 'mouse' && event.button !== 0) return
     pointerStart.current = { x: event.clientX, y: event.clientY }
     setIsDragging(false)
@@ -60,15 +63,20 @@ export default function ProfileCard({ user, onOpen, onSkip, onLike, onIntent }: 
     setExitDirection(direction)
     setDragX((direction === 'right' ? 1 : -1) * Math.max(window.innerWidth, 560))
     suppressClick.current = true
-    window.setTimeout(() => {
-      if (direction === 'right') onLike()
+    window.setTimeout(async () => {
+      if (direction === 'right') await tryLike()
       else onSkip()
     }, 260)
   }
 
+  async function tryLike() {
+    try { await onLike() }
+    catch { setExitDirection(null); setDragX(0); suppressClick.current = false }
+  }
+
   return (
     <div className="profile-swipe-stage">
-      <button className="swipe-action swipe-skip" onClick={onSkip} aria-label="Пропустить"><X size={25} /></button>
+      <button className="swipe-action swipe-skip" onClick={onSkip} disabled={disabled} aria-label="Пропустить"><X size={25} /></button>
       <article
         className={`profile-card${isDragging ? ' is-dragging' : ''}${exitDirection ? ` is-exiting-${exitDirection}` : ''}`}
         onPointerEnter={onIntent}
@@ -102,20 +110,20 @@ export default function ProfileCard({ user, onOpen, onSkip, onLike, onIntent }: 
           }}
           aria-label={`Открыть анкету ${user.name}`}
         >
-          <img src={user.photos[0]} alt={user.name} fetchPriority="high" decoding="async" />
+          <Avatar src={user.photos[0]} alt={user.name} fetchPriority="high" />
           <span className="image-shade" />
           <span className="profile-hover-hint">О, как!</span>
           <div className="profile-card-info">
             <div className="feed-profile-meta">
               <CompatibilityBadge score={user.compatibility} />
-              <span className="feed-zodiac">✧ {user.sign}</span>
+              {user.sign && <span className="feed-zodiac">✧ {user.sign}</span>}
             </div>
-            <h2>{user.name}<span>, {user.age}</span></h2>
-            <p className="profile-location"><MapPin size={15} />{user.city}</p>
+            <h2>{user.name}{user.age !== null && <span>, {user.age}</span>}</h2>
+            {user.city && <p className="profile-location"><MapPin size={15} />{user.city}</p>}
           </div>
         </div>
       </article>
-      <button className="swipe-action swipe-like" onClick={onLike} aria-label="Нравится"><Check size={25} /></button>
+      <button className="swipe-action swipe-like" onClick={() => { void tryLike() }} disabled={disabled} aria-label="Нравится"><Check size={25} /></button>
     </div>
   )
 }

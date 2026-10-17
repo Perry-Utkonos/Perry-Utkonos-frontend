@@ -1,12 +1,13 @@
 export interface User {
   id: string
   name: string
-  age: number
+  username?: string
+  age: number | null
   city: string
   bio: string
   interests: string[]
   sign: string
-  compatibility: number
+  compatibility: number | null
   photos: string[]
   goals: string[]
   online?: boolean

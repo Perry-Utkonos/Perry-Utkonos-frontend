@@ -1,0 +1,14 @@
+.git
+.tmp
+.backups
+node_modules
+dist
+.env
+.env.*
+*.log
+*.tsbuildinfo
+.qa-*
+design
+tests
+docs
+integration
