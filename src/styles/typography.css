@@ -1,0 +1,100 @@
+@font-face {
+  font-family: 'Manrope';
+  src: url('/fonts/Manrope-Variable.woff2') format('woff2');
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
+
+:root {
+  --font-ui: 'Manrope', Arial, sans-serif;
+  --photo-text: var(--text);
+  --type-title: 800 28px/1.2 var(--font-ui);
+  --type-profile: 800 26px/1.2 var(--font-ui);
+  --type-card-title: 700 22px/1.3 var(--font-ui);
+  --type-toolbar: 700 16px/1.4 var(--font-ui);
+  --type-section: 700 14px/1.4 var(--font-ui);
+  --type-body: 400 13px/1.6 var(--font-ui);
+  --type-label: 600 12px/1.4 var(--font-ui);
+  --type-caption: 500 11px/1.4 var(--font-ui);
+  --type-button: 700 14px/1.4 var(--font-ui);
+  font: var(--type-body);
+}
+
+/* Shared text roles are applied after page/theme rules to prevent drift. */
+.page-header h1, .auth-card h1, .match-modal h2 {
+  font: var(--type-title);
+  letter-spacing: -.7px;
+  color: var(--text);
+}
+.header-title { font: var(--type-toolbar); color: var(--text); }
+.profile-card-info h2, .detail-title-row h1, .own-profile-card h2 {
+  font: var(--type-profile);
+  letter-spacing: -.5px;
+}
+.profile-card-info h2 span, .detail-title-row h1 span, .own-profile-card h2 span { font-size: inherit; font-weight: 500; }
+.subscription-card h2, .compat-hero h1, .page-state h2, .profile-hover-hint {
+  font: var(--type-card-title);
+  letter-spacing: -.3px;
+}
+.detail-section h3, .theme-settings h3, .payment-status h3, .compat-detail-card strong {
+  font: var(--type-section);
+  color: var(--text);
+}
+.own-bio, .detail-section > p, .compat-summary, .compat-detail-card p,
+.match-copy, .auth-card > p, .page-state p, .subscription-card > p,
+.subscription-card li, .payment-status p {
+  font: var(--type-body);
+}
+.own-bio, .detail-section > p, .compat-summary, .compat-detail-card p,
+.match-copy, .auth-card > p, .page-state p, .subscription-card > p {
+  color: var(--muted);
+}
+.chat-info > span, .message-bubble, .message-composer input { font: var(--type-body); }
+.chat-info > strong, .chat-header strong { font: var(--type-section); color: var(--text); }
+.chat-timestamp, .message-day {
+  font: var(--type-caption);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.premium-card small, .detail-meta small, .settings-list button small,
+.subscription-card > small, .profile-inline-hint, .disclaimer, .settings-help,
+.api-notice, .saved-notice, .profile-form small, .demo-notice, .chat-status,
+.chat-header small, .chat-compat, .typing-hint, .chat-info > strong small,
+.subscription-card > .api-notice {
+  font: var(--type-caption);
+}
+.premium-card small, .detail-meta small, .settings-list button small,
+.subscription-card > small, .profile-inline-hint, .disclaimer, .settings-help,
+.api-notice, .saved-notice, .profile-form small, .demo-notice, .chat-status,
+.typing-hint { color: var(--muted); }
+.profile-location, .own-profile-card .profile-location {
+  font: 500 12px/1.4 var(--font-ui);
+  color: var(--muted);
+}
+.profile-card-info { color: var(--photo-text); }
+.profile-card-info .profile-location { color: var(--photo-text); }
+.interest-list span, .detail-interests span, .compat-detail-card .interest-list span,
+.detail-meta strong, .profile-zodiac, .zodiac-chips {
+  font: var(--type-caption);
+}
+.compatibility-badge, .feed-zodiac { font: 600 11px/1.4 var(--font-ui); letter-spacing: 0; }
+.feed-page .compatibility-badge, .feed-page .feed-zodiac { color: var(--photo-text); }
+.button { font: var(--type-button); }
+.text-button, .theme-choice, .premium-card strong { font: var(--type-label); }
+.profile-form label { font: var(--type-label); }
+.profile-form input, .profile-form textarea, .profile-form select, .motion-select { font: var(--type-body); }
+.settings-list button { font: 500 13px/1.4 var(--font-ui); }
+.side-link { font: var(--type-label); }
+.nav-item { font: 600 10px/1.4 var(--font-ui); }
+.side-link i, .chat-time i { font: 700 10px/1 var(--font-ui); font-variant-numeric: tabular-nums; }
+.brand { font: 800 21px/1.2 var(--font-ui); }
+.subscription-price strong { font: 800 32px/1.2 var(--font-ui); }
+.subscription-price span { font: var(--type-caption); }
+.score-ring strong { font: 800 40px/1.2 var(--font-ui); }
+.score-ring span { font: var(--type-caption); }
+.route-loading, .messages .load-history { font: var(--type-label); }
+.api-error { font: var(--type-body); }
+.photo-viewer-count { font: var(--type-label); font-variant-numeric: tabular-nums; }

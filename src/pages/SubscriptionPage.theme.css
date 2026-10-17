@@ -6,4 +6,4 @@
 .subscription-card li { color: var(--text); }
 .subscription-icon { background: var(--surface-light); color: var(--accent); border-color: var(--line); }
 .subscription-price span, .subscription-card > small { color: var(--muted); }
-:root[data-theme='cream'] .subscription-card li svg { color: var(--accent); }
+.subscription-card li svg { color: var(--accent); }

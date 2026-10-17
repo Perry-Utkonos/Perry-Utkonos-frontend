@@ -1,7 +1,4 @@
 export const loadUserProfilePage = () => import('./pages/UserProfilePage')
-export const loadChatsPage = () => import('./pages/ChatsPage')
 export const loadChatPage = () => import('./pages/ChatPage')
 export const loadCompatibilityPage = () => import('./pages/CompatibilityPage')
 export const loadSubscriptionPage = () => import('./pages/SubscriptionPage')
-export const loadProfilePage = () => import('./pages/ProfilePage')
-export const loadSettingsPage = () => import('./pages/SettingsPage')

@@ -1,16 +1,17 @@
-import { Suspense } from 'react'
 import { MessageCircle, Settings, UserRound } from 'lucide-react'
-import { Link, NavLink, Outlet, useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
+import TabLink from '../components/TabLink'
+import RouteTransition from '../components/RouteTransition'
 import BottomNav from '../components/BottomNav'
 import CentaurIcon from '../components/CentaurIcon'
 import MatchModal from '../components/MatchModal'
-import { loadChatsPage, loadProfilePage, loadSettingsPage } from '../routeLoaders'
 import type { User } from '../types'
+import { demo } from '../api'
 
 const nav = [
   { to: '/', label: 'Лента', Icon: CentaurIcon, end: true },
-  { to: '/chats', label: 'Сообщения', Icon: MessageCircle, preload: loadChatsPage },
-  { to: '/me', label: 'Мой профиль', Icon: UserRound, end: true, preload: loadProfilePage },
+  { to: '/chats', label: 'Сообщения', Icon: MessageCircle },
+  { to: '/me', label: 'Мой профиль', Icon: UserRound, end: true },
 ]
 
 interface AppLayoutProps {
@@ -26,16 +27,15 @@ export default function AppLayout({ match, me, onCloseMatch, unread }: AppLayout
     <div className="app-frame">
       <aside className="desktop-sidebar">
         <Link to="/" className="brand"><span className="brand-mark"><CentaurIcon monochrome /></span>fate<span className="brand-dot">.</span></Link>
-        <nav>{nav.map(({ to, label, Icon, end, preload }) => <NavLink
+        <nav>{nav.map(({ to, label, Icon, end }) => <TabLink
           key={to} to={to} end={end}
           className={({ isActive }) => `side-link${isActive ? ' active' : ''}`}
-          onPointerEnter={() => { void preload?.() }}
-          onFocus={() => { void preload?.() }}
-        ><Icon /><span>{label}</span>{to === '/chats' && unread > 0 && <i>{unread}</i>}</NavLink>)}</nav>
-        <NavLink to="/settings" end className={({ isActive }) => `side-link settings-side-link${isActive ? ' active' : ''}`} onPointerEnter={() => { void loadSettingsPage() }} onFocus={() => { void loadSettingsPage() }}><Settings size={19} /><span>Настройки</span></NavLink>
+        ><Icon /><span>{label}</span>{to === '/chats' && unread > 0 && <i>{unread}</i>}</TabLink>)}</nav>
+        <TabLink to="/settings" end className={({ isActive }) => `side-link settings-side-link${isActive ? ' active' : ''}`}><Settings size={19} /><span>Настройки</span></TabLink>
       </aside>
       <main className="app-main">
-        <Suspense fallback={<div className="route-loading" role="status">Загрузка…</div>}><Outlet /></Suspense>
+        {demo && <div className="demo-notice" role="status"><span>Тестовый режим · данные примеров</span><button className="text-button" onClick={() => window.location.reload()}>Сбросить</button></div>}
+        <RouteTransition />
       </main>
       <BottomNav />
       {match && <MatchModal user={match.user} me={me} conversationId={match.conversationId} onClose={onCloseMatch} onContinue={() => {

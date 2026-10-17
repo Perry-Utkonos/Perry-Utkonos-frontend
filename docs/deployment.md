@@ -58,10 +58,12 @@ docker compose --env-file .tmp/runtime/compose.env -f compose.integration.yaml d
 
 Оставьте стек работающим. В отдельном терминале frontend:
 
-```bash
-npm ci
-npm run dev
+```powershell
+npm.cmd ci
+npm.cmd run dev
 ```
+
+В Git Bash и Linux используйте `npm` вместо `npm.cmd`.
 
 Vite проксирует `/api/` и `/hubs/chat` в `http://127.0.0.1:8080`. Если web работает на другом адресе, задайте `API_PROXY_TARGET` в `.env` по примеру `.env.example` и перезапустите Vite. Эта настройка действует на сервер разработки; в Docker адреса остаются относительными и обрабатываются Nginx.
 

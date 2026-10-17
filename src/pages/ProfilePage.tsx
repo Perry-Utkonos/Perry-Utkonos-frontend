@@ -32,7 +32,7 @@ export default function ProfilePage() {
     {!editing ? <>
       <div className="own-profile-card">
         <div className="own-photo"><Avatar src={me.photos[0]} alt={me.name} /><button aria-label="Изменить анкету" onClick={() => { setEditing(true); setSaved(false) }}><Edit3 size={15} /></button></div>
-        <h2>{me.name}{me.age !== null ? `, ${me.age}` : ''}</h2>{me.city && <p className="profile-location"><MapPin size={15} />{me.city}</p>}
+        <h2>{me.name}{me.age !== null && <span>, {me.age}</span>}</h2>{me.city && <p className="profile-location"><MapPin size={15} />{me.city}</p>}
         <p className="own-bio">{me.bio || 'Расскажите о себе, чтобы начать знакомство.'}</p>
         <div className="interest-list detail-interests">{me.interests.map((interest) => <span key={interest}>{interest}</span>)}</div>
         {me.sign && <div className="profile-zodiac">✧ {me.sign}</div>}

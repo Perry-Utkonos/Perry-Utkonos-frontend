@@ -3,9 +3,10 @@ dist/
 .tmp/
 *.tsbuildinfo
 *.log
-.qa-*.png
-.qa-*.jpg
-.qa-*.webp
+.qa-*
+.DS_Store
+Thumbs.db
+Desktop.ini
 design/figma-import.generated.js
 design/code.generated.js
 design/manifest.json

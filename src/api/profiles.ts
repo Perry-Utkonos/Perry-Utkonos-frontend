@@ -18,11 +18,3 @@ export function toUser(profile: ProfileDto | AccountDto): User {
   }
 }
 export function errorMessage(error: unknown) { return error instanceof Error ? error.message : 'Не удалось выполнить действие. Повторите попытку.' }
-export function formatTime(value: string | null) {
-  if (!value) return ''
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleDateString('ru-RU') === new Date().toLocaleDateString('ru-RU')
-    ? date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
-}

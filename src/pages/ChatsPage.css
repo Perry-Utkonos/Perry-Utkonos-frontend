@@ -9,6 +9,6 @@
 .chat-info > strong { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
 .chat-info > strong small { color: #8bd6a7; font-size: 9px; font-weight: 500; }
 .chat-info > span { overflow: hidden; color: var(--muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.chat-time { display: flex; height: 43px; align-items: flex-end; flex-direction: column; justify-content: space-between; color: #817a87; font-size: 9px; }
+.chat-time { display: flex; height: 43px; align-items: flex-end; flex-direction: column; justify-content: space-between; }
 .chat-time i { display: grid; width: 18px; height: 18px; place-items: center; border-radius: 50%; background: var(--primary); color: white; font-style: normal; font-size: 9px; }
-.chat-chevron { color: #605965; }
+.chat-chevron { color: var(--muted); }

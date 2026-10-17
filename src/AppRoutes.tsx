@@ -6,17 +6,17 @@ import type { User } from './types'
 import type { ChatsState } from './hooks/useChats'
 import type { usePeople } from './hooks/usePeople'
 import FeedPage from './pages/FeedPage'
+import ChatsPage from './pages/ChatsPage'
+import ProfilePage from './pages/ProfilePage'
+import SettingsPage from './pages/SettingsPage'
 import PageState from './components/PageState'
 import { api } from './api'
 import { errorMessage, toUser } from './api/profiles'
-import { loadChatPage, loadChatsPage, loadCompatibilityPage, loadProfilePage, loadSettingsPage, loadSubscriptionPage, loadUserProfilePage } from './routeLoaders'
+import { loadChatPage, loadCompatibilityPage, loadSubscriptionPage, loadUserProfilePage } from './routeLoaders'
 
 const UserProfilePage = lazy(loadUserProfilePage)
-const ChatsPage = lazy(loadChatsPage)
 const ChatPage = lazy(loadChatPage)
 const CompatibilityPage = lazy(loadCompatibilityPage)
-const ProfilePage = lazy(loadProfilePage)
-const SettingsPage = lazy(loadSettingsPage)
 const SubscriptionPage = lazy(loadSubscriptionPage)
 
 interface AppRoutesProps {

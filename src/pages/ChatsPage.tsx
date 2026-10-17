@@ -7,7 +7,8 @@ import PageState from '../components/PageState'
 import type { ChatsState } from '../hooks/useChats'
 import type { User } from '../types'
 import { api } from '../api'
-import { errorMessage, formatTime } from '../api/profiles'
+import { errorMessage } from '../api/profiles'
+import { formatConversationTime } from '../chatTime'
 
 export default function ChatsPage({ chats, users }: { chats: ChatsState; users: User[] }) {
   const navigate = useNavigate()
@@ -34,7 +35,7 @@ export default function ChatsPage({ chats, users }: { chats: ChatsState; users: 
       {chats.conversations.map((chat) => <Link className="chat-row" key={chat.id} to={`/chat/${chat.id}`}>
         <span className="chat-avatar"><Avatar src={chat.peer.avatarUrl} /></span>
         <span className="chat-info"><strong>{chat.peer.displayName || chat.peer.username}</strong><span>{chat.lastMessageBody || 'Начните разговор'}</span></span>
-        <span className="chat-time">{formatTime(chat.lastMessageAt)}{chat.unreadCount > 0 && <i>{chat.unreadCount}</i>}</span><ChevronRight className="chat-chevron" size={16} />
+        <span className="chat-time"><time className="chat-timestamp" dateTime={chat.lastMessageAt ?? undefined}>{formatConversationTime(chat.lastMessageAt)}</time>{chat.unreadCount > 0 && <i>{chat.unreadCount}</i>}</span><ChevronRight className="chat-chevron" size={16} />
       </Link>)}
     </div>}
   </section>

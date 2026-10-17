@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { api } from '../api'
+import { api, demo } from '../api'
 import { errorMessage } from '../api/profiles'
 import CentaurIcon from '../components/CentaurIcon'
 
@@ -16,6 +16,12 @@ export default function AuthPage() {
       else await api.login({ usernameOrEmail: String(values.get('login')).trim(), password: String(values.get('password')) })
     } catch (cause) { setError(errorMessage(cause)) } finally { setBusy(false) }
   }
+  if (demo) return <main className="auth-page"><section className="auth-card">
+    <div className="brand"><CentaurIcon monochrome />fate.</div>
+    <h1>Тестовый режим</h1>
+    <p>Вход без регистрации с примерными анкетами и переписками.</p>
+    <button className="button button-primary button-wide" onClick={() => demo?.enter()}>Открыть приложение</button>
+  </section></main>
   return <main className="auth-page">
     <section className="auth-card">
       <div className="brand"><CentaurIcon monochrome />fate.</div>

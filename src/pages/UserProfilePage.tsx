@@ -45,7 +45,7 @@ export default function UserProfilePage({ user, onLike, onSkip, onBack, busy }: 
         />
       </button>)}</div>
       <div className="detail-content">
-        <div className="detail-title-row"><div><h1>{user.name}{user.age !== null ? `, ${user.age}` : ''}</h1>{user.city && <p className="profile-location"><MapPin size={15} />{user.city}</p>}</div><Link className="compatibility-link" to={`/compatibility/${user.id}`} aria-label="Посмотреть совместимость"><CompatibilityBadge score={user.compatibility} /></Link></div>
+        <div className="detail-title-row"><div><h1>{user.name}{user.age !== null && <span>, {user.age}</span>}</h1>{user.city && <p className="profile-location"><MapPin size={15} />{user.city}</p>}</div><Link className="compatibility-link" to={`/compatibility/${user.id}`} aria-label="Посмотреть совместимость"><CompatibilityBadge score={user.compatibility} /></Link></div>
         <section className="detail-section"><h3>Немного обо мне</h3><p>{user.bio || 'Пока не заполнено.'}</p></section>
         <section className="detail-section"><h3>Интересы</h3><div className="interest-list detail-interests">{user.interests.map((interest) => <span key={interest}>{interest}</span>)}</div></section>
         <div className="detail-meta">

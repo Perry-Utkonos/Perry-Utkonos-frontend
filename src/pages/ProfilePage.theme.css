@@ -7,6 +7,7 @@
 .own-bio { color: var(--muted); }
 .premium-card { background: var(--surface); border-color: var(--line); color: var(--text); }
 .premium-card strong { color: var(--text); }
+.premium-card > svg { color: var(--muted); }
 .premium-icon { background: var(--surface-light); color: var(--accent); border-color: var(--line); }
 .premium-card small, .profile-inline-hint { color: var(--muted); }
 :root[data-theme='cream'] .premium-card.premium-active { border-color: var(--accent); }

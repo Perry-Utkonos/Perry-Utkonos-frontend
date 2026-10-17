@@ -1,6 +1,16 @@
 
 .app-main {
   --art-size: min(100vw, 100dvh);
+  position: relative;
+  isolation: isolate;
+  background: var(--bg);
+}
+.app-main::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background: var(--bg) var(--outer-art) center center / var(--art-size) no-repeat;
 }
 .desktop-sidebar { background: var(--page-bg) !important; border-color: var(--line); backdrop-filter: none; }
@@ -21,5 +31,6 @@
 @media (min-width: 760px) {
   .app-frame { width: 100%; max-width: none; margin: 0; }
   .app-main { --art-size: min(100dvh, calc(100vw - 252px)); }
+  .app-main::before { left: 252px; }
   .desktop-sidebar { z-index: 5; left: 0; }
 }

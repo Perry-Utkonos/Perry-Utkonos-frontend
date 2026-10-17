@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { ArrowLeft, Send, Sparkles } from 'lucide-react'
+import { ArrowLeft, Check, CheckCheck, Send, Sparkles } from 'lucide-react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Avatar from '../components/Avatar'
 import PageState from '../components/PageState'
 import type { ChatsState } from '../hooks/useChats'
 import type { User } from '../types'
 import { createMessageId } from '../hooks/chatMessages'
-import { errorMessage, formatTime } from '../api/profiles'
+import { errorMessage } from '../api/profiles'
+import { chatDayKey, formatMessageDate, formatMessageTime } from '../chatTime'
 
 export default function ChatPage({ me, chats }: { me: User; chats: ChatsState }) {
   const { id = '' } = useParams()
@@ -64,9 +65,10 @@ export default function ChatPage({ me, chats }: { me: User; chats: ChatsState })
       {!messages.length && (chats.historyLoading[id] ? <PageState title="Загружаем сообщения…" /> : !chats.historyErrors[id] && <PageState title="Начните разговор" message="Напишите первое сообщение." />)}
       {messages.map((message, index) => {
         const mine = message.senderId === me.id
-        const showDate = index === 0 || messages[index - 1].createdAt.slice(0, 10) !== message.createdAt.slice(0, 10)
-        return <div key={message.id} style={{ display: 'contents' }}>{showDate && <div className="message-day">{new Date(message.createdAt).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</div>}<div className={`message ${mine ? 'mine' : 'theirs'}`}>
-          {!mine && <Avatar src={peer.avatarUrl} />}<div className="message-bubble">{message.deletedAt ? 'Сообщение удалено' : message.body || 'Вложение'}<time dateTime={message.createdAt}>{formatTime(message.createdAt)}{mine && <span className="read-check" aria-label={message.seq <= (chats.readReceipts[id] ?? 0) ? 'Прочитано' : 'Отправлено'}>{message.seq <= (chats.readReceipts[id] ?? 0) ? ' ✓✓' : ' ✓'}</span>}</time></div>
+        const showDate = index === 0 || chatDayKey(messages[index - 1].createdAt) !== chatDayKey(message.createdAt)
+        const read = message.seq <= (chats.readReceipts[id] ?? 0)
+        return <div key={message.id} style={{ display: 'contents' }}>{showDate && <div className="message-day"><time dateTime={chatDayKey(message.createdAt) ?? undefined}>{formatMessageDate(message.createdAt)}</time></div>}<div className={`message ${mine ? 'mine' : 'theirs'}`}>
+          {!mine && <Avatar src={peer.avatarUrl} />}<div className="message-bubble">{message.deletedAt ? 'Сообщение удалено' : message.body || 'Вложение'}<time className="chat-timestamp" dateTime={message.createdAt}>{formatMessageTime(message.createdAt)}{mine && <span className="read-check" aria-label={read ? 'Прочитано' : 'Отправлено'}>{read ? <CheckCheck size={12} /> : <Check size={12} />}</span>}</time></div>
         </div></div>
       })}
     </div>

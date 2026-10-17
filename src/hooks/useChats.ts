@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { HubConnectionBuilder, HubConnectionState, LogLevel, type HubConnection } from '@microsoft/signalr'
-import { api, hubUrl } from '../api'
+import { api, demo, hubUrl } from '../api'
 import type { ConversationDto, MessageDto } from '../api/contracts'
 import { errorMessage } from '../api/profiles'
 import { fetchCatchup, mergeMessages } from './chatMessages'
@@ -79,6 +79,11 @@ export function useChats(userId: string) {
 
   useEffect(() => {
     alive.current = true
+    if (demo) {
+      setConnectionState('connected')
+      void refresh()
+      return () => { alive.current = false }
+    }
     let disposed = false
     let timer: ReturnType<typeof setTimeout> | undefined
     const connection = new HubConnectionBuilder()
@@ -131,12 +136,22 @@ export function useChats(userId: string) {
   }, [userId, receive, refresh, loadHistory])
 
   async function sendMessage(id: string, text: string, clientMessageId: string) {
+    if (demo) {
+      receive(await demo.sendMessage(id, text, clientMessageId))
+      await refresh()
+      return
+    }
     if (hub.current?.state !== HubConnectionState.Connected) throw new Error('Связь с чатом потеряна. Дождитесь подключения и повторите отправку.')
     const message = await hub.current.invoke<MessageDto>('SendMessage', id, clientMessageId, text)
     receive(message)
     await refresh()
   }
   const markRead = useCallback(async (id: string, seq: number) => {
+    if (demo) {
+      await demo.markRead(id, seq)
+      await refresh()
+      return true
+    }
     if (hub.current?.state !== HubConnectionState.Connected || seq <= 0) return false
     try {
       await hub.current.invoke('MarkRead', id, seq)
